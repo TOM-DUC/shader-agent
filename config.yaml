@@ -1,0 +1,86 @@
+# === LLM 配置 ===
+llm:
+  # 通用对话模型，用于 Analyzer 的讲解与总结
+  # deepseek-chat 已公告将于 2026/07/24 废弃，改用 v4-pro
+  chat_model: "deepseek-v4-pro"
+  # 代码生成模型，用于 Generator
+  coder_model: "deepseek-v4-flash"
+  # 推理模型，可选用于复杂分析（支持 thinking mode）
+  reasoner_model: "deepseek-v4-pro"
+
+  # 通用生成参数
+  temperature: 0.3
+  max_tokens: 4096
+  top_p: 0.95
+
+  # 网络与重试
+  timeout_seconds: 120
+  max_retries: 3
+  retry_backoff_seconds: 2
+
+# === Agent 编排 ===
+orchestration:
+  framework: "custom"          # 可选 "metagpt" | "custom"
+
+# === 日志 ===
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"
+
+# === 项目路径（相对项目根） ===
+paths:
+  data_dir: "data"
+  shadertoy_corpus_dir: "data/shadertoy_corpus"
+  vector_db_dir: "data/vector_db"
+  models_dir: "data/models"
+
+# === 阶段二新增：知识库构建 ===
+corpus:
+  # Shadertoy API 拉取
+  shadertoy_api_base: "https://www.shadertoy.com/api/v1"
+  # 拉取数量上限（首版控制规模，避免过长）
+  max_shaders: 300
+  # 单 shader 的最低点赞数过滤
+  min_likes: 30
+  # 按主题搜索时的关键词列表（每个 query 各取 top N）
+  search_queries:
+    - "raymarching"
+    - "sdf"
+    - "noise"
+    - "fractal"
+    - "post processing"
+    - "shadertoy"
+    - "ray marching"
+    - "mandelbrot"
+    - "voronoi"
+  # 每个 query 拉取的 shader 数
+  per_query_limit: 60
+  # 请求间隔（秒），避免触发限流
+  request_interval_seconds: 0.4
+  # 是否启用 LLM 复核打标（默认 false，靠规则；阶段三按需开启）
+  enable_llm_tagging: false
+  # 单 shader 代码长度过滤
+  min_code_chars: 200
+  max_code_chars: 12000
+
+# === 阶段二新增：嵌入模型 ===
+embedding:
+  # 默认 bge-m3：1024 维，跨语言（中文 query + 英文代码注释）
+  # 备选：BAAI/bge-base-en-v1.5（768 维，英文，更小约 440MB）
+  model_name: "BAAI/bge-m3"
+  # 设备：cpu / cuda / mps（mac）/ auto
+  device: "auto"
+  # 归一化嵌入向量（cosine 检索时建议 True）
+  normalize_embeddings: true
+  # 批量编码大小
+  batch_size: 8
+  # 模型本地缓存目录（None 则使用 HF 默认 ~/.cache/huggingface）
+  cache_dir: "data/models"
+
+# === 阶段二新增：向量库 ===
+vector_store:
+  # ChromaDB 集合名
+  collection_name: "shadertoy_shaders"
+  # 距离度量
+  distance: "cosine"

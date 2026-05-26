@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+*.pyc
+
+# 环境与密钥
+.env
+.env.local
+
+# 数据和产物（大文件，可脚本重建）
+data/
+logs/
+
+# ChromaDB
+*.sqlite
+*.sqlite3
+*.db
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# 参考项目（仅阅读，不纳入版本）
+desktop-shadertoy/
+gpt-researcher/
+MetaGPT/
+
+# 历史计划文件
+plan/

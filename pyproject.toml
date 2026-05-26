@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["gpt-researcher", "MetaGPT", "desktop-shadertoy", ".venv", "data", "logs", ".git"]
+pythonpath = ["."]
