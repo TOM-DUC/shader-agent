@@ -192,6 +192,9 @@ class GenerationSpec(BaseModel):
     - complexity       : "minimal" / "simple" / "moderate" / "complex"
     - constraints      : 用户提的硬约束（"不要用纹理""单 pass""<150 行" 等）
     - reference_report : 可选；用于"基于这份分析改写"任务，承载 Analyzer 产物
+    - base_code        : 可选；改写模式下的原始代码。非空即表示"在此代码基础上做
+                         最小化修改"，而不是从零生成。
+    - rewrite_mode     : 是否为改写模式（基于 base_code 做最小改动）
     """
     description: str
     effect_type: str = ""             # raymarching / 2d-pattern / fractal / ...
@@ -200,6 +203,8 @@ class GenerationSpec(BaseModel):
     complexity: Literal["minimal", "simple", "moderate", "complex"] = "simple"
     constraints: list[str] = Field(default_factory=list)
     reference_report: AnalysisReport | None = None
+    base_code: str = ""
+    rewrite_mode: bool = False
 
     PAYLOAD_TYPE: ClassVar[str] = "GenerationSpec"
 

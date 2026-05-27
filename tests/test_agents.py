@@ -313,6 +313,8 @@ def test_generator_role_no_llm_produces_runnable_stub():
 
 
 def test_orchestrator_analyze_then_generate_carries_reference():
+    """v7: remix 默认跳过分析，直接传 base_code + rewrite_mode 给 Generator。
+    不再传 reference_report（避免提示词膨胀）。"""
     seeds = get_seed_shaders()
     sphere = next(s for s in seeds if s.name == "Raymarched Sphere")
     orch = Orchestrator(
@@ -323,13 +325,13 @@ def test_orchestrator_analyze_then_generate_carries_reference():
         code=sphere.code_image,
         ask="保持算法不变，颜色换成霓虹紫",
     )
-    rep = result["report"]
     gen = result["generated"]
-    assert rep is not None and gen is not None
-    # 关键契约：reference_report 必须穿越到 generator
+    assert gen is not None
     assert gen.spec is not None
-    assert gen.spec.reference_report is not None
-    assert gen.spec.reference_report.algorithm_summary == rep.algorithm_summary
+    # v7 关键契约：base_code + rewrite_mode 传递，reference_report 不传
+    assert gen.spec.base_code == sphere.code_image
+    assert gen.spec.rewrite_mode is True
+    assert gen.spec.reference_report is None
 
 
 def test_generator_fix_loop_runs_when_compile_fails():

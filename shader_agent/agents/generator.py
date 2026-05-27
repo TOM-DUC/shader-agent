@@ -117,6 +117,8 @@ class ShaderGenerator(Role):
         iterations = 0
         final_code = ""
         final_explain = ""
+        # 首轮（设计/改写轮）的解释。修正轮只针对编译错误，不应覆盖它。
+        design_explain = ""
         compile_result = CompileResult(ok=False, errors="not_executed")
 
         for i in range(self._max_fix_loops + 1):
@@ -134,6 +136,8 @@ class ShaderGenerator(Role):
                 logger.warning(f"[generator] draft failed: {r3.error}")
                 break
             draft = r3.data
+            if i == 0 and draft.explanation:
+                design_explain = draft.explanation
             r4 = self.run_action("validate_code", ValidateCodeIn(code=draft.code))
             if not r4.ok or r4.data is None:
                 final_code = draft.code
@@ -154,6 +158,10 @@ class ShaderGenerator(Role):
                 f"[generator] fix loop {i+1}/{self._max_fix_loops+1}: "
                 f"errors={prev_errors[:120]}"
             )
+
+        # 解释归一化：最终始终优先用首轮的设计/改写解释（描述最后成功的成品）。
+        if design_explain:
+            final_explain = design_explain
 
         # 阶段五：自评（可选）
         critique_score = 0.0

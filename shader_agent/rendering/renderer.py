@@ -89,6 +89,17 @@ class GLSLRenderer:
         time: float = 1.5,
         frame: int = 90,
     ) -> bytes:
+        # 预检：Shadertoy 多通道/纹理特性（iChannelN / sampler2D / 多 buffer）
+        # 在本地单通道环境无法支持，提前给出友好提示而非一堆 GL 报错。
+        import re as _re
+        if _re.search(r"\biChannel[0-9]\b|\bsampler(2D|Cube|3D)\b|"
+                      r"\biChannelResolution\b|\biChannelTime\b", user_code or ""):
+            raise RuntimeError(
+                "该 shader 使用了多通道/纹理输入（iChannel0~3、sampler2D 或 "
+                "iChannelResolution 等），本地预览仅支持无外部纹理的单通道 "
+                "Image shader。请改用不依赖 iChannel 的版本，或在 Shadertoy "
+                "上查看原效果。"
+            )
         vbo = self._ensure_vbo()
         wrapped_fs = wrap_shadertoy_fragment(user_code)
         try:

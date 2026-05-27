@@ -31,12 +31,12 @@ def analyzer_examples() -> list[list[str]]:
 def generator_examples() -> list[list[str]]:
     """[[prompt, palette, complexity, dynamic], ...]"""
     return [
-        ["画一个程序生成的霓虹蓝紫万花筒，6 折对称，带时间动画", "neon", "simple", True],
-        ["raymarching 一个软融合的两个球（smin），冷色调中等复杂", "cool blue", "moderate", True],
-        ["用 fbm 噪声画一个水波纹效果，蓝绿色，平静", "cool blue", "simple", True],
-        ["落日下的旋转方块，暖色，简单", "warm sunset", "simple", True],
-        ["黑白单色的扫描线 CRT 老电视效果", "monochrome", "simple", True],
-        ["复杂的分形花朵图案，鲜艳", "vibrant", "complex", False],
+        ["画一个程序生成的霓虹蓝紫万花筒，6 折对称，带时间动画", "neon glowing", "simple", True],
+        ["raymarching 一个软融合的两个球（smin），冷色调中等复杂", "cool blue cyan", "moderate", True],
+        ["用 fbm 噪声画一个水波纹效果，蓝绿色，平静", "cool blue cyan", "simple", True],
+        ["落日下的旋转方块，暖色，简单", "warm sunset orange red", "simple", True],
+        ["黑白单色的扫描线 CRT 老电视效果", "monochrome grayscale", "simple", True],
+        ["复杂的分形花朵图案，鲜艳", "vibrant saturated", "complex", False],
     ]
 
 

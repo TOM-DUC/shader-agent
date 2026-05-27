@@ -119,13 +119,16 @@ _SYSTEM_WALKTHROUGH = (
     "**逐段讲解**，并提取关键变量。\n"
     "严格输出以下 JSON 结构，不要任何 markdown 包裹、不要多余文字：\n"
     "{\n"
-    '  "walkthrough": { "<段名>": "<2~4 句中文解释这段做什么、关键技巧>", ... },\n'
-    '  "key_variables": { "<变量名>": "<1 句中文说明用途/含义>", ... }\n'
+    '  "walkthrough": { "<段名>": "<2~4 句简体中文解释这段做什么、关键技巧>", ... },\n'
+    '  "key_variables": { "<变量名>": "<1 句简体中文说明用途/含义>", ... }\n'
     "}\n"
     "讲解约束：\n"
     "1. 只讲代码里真实出现的内容，不要捏造；\n"
-    "2. 每段 100~200 字之间，过短会被判失败；\n"
-    "3. key_variables 至少 3 项，最多 10 项；包含 uv / 时间 / 关键参数。"
+    "2. 每段 60~150 字之间，不要过长；\n"
+    "3. key_variables 至少 3 项，最多 10 项；包含 uv / 时间 / 关键参数；\n"
+    "4. **所有解释文字必须使用简体中文**，禁止整句英文（GLSL 标识符、函数名、"
+    "数学符号可保留原文，但描述性语句一律中文）。\n"
+    "5. 即使代码较长，也要覆盖主要函数与 mainImage，保持中文、保持简洁。"
 )
 
 
@@ -140,10 +143,40 @@ class WalkthroughAction(Action[WalkthroughIn, WalkthroughOut]):
         if not llm_fn:
             return self._fallback(sections)
 
-        # prompt 拼接：把所有 section 一起喂，但每段加显式标题
+        # prompt 拼接：把所有 section 一起喂，每段加显式标题。
+        #
+        # 关于"限流"：绝大多数 Shadertoy shader 都在 5KB 以内，DeepSeek 完全能
+        # 一次性吃下，不需要截断。只有极少数超大 shader（>16KB）才有必要限流，
+        # 以免 prompt 过大拖慢推理。因此这里把阈值放得很宽：
+        #   - 总代码不超过 _SOFT_LIMIT 时：原样全量喂入，不做任何截断；
+        #   - 超过时：才按段截断，且单段保留额度也更大，尽量少丢信息。
+        # 这样既保证常见 shader 的解释完整、速度不受影响，又能兜住极端超大输入。
+        _SOFT_LIMIT = 16000   # 总代码低于此值则完全不截断（约 400~500 行）
+        _TOTAL_CAP = 16000    # 触发截断后，喂入的合计上限
+        _PER_SECTION = 4000   # 触发截断后，单段最多保留的字符数
+
+        total_len = sum(len(b) for b in sections.values())
         section_text = ""
-        for title, body in sections.items():
-            section_text += f"\n--- section: {title} ---\n{body}\n"
+        if total_len <= _SOFT_LIMIT:
+            # 常见情况：全量喂入，不丢任何内容
+            for title, body in sections.items():
+                section_text += f"\n--- section: {title} ---\n{body}\n"
+        else:
+            # 超大 shader：按段限流，保留每段开头（含函数签名与主体逻辑）
+            used = 0
+            for title, body in sections.items():
+                if used >= _TOTAL_CAP:
+                    section_text += (
+                        f"\n--- section: {title} ---\n"
+                        f"（代码超长，本段已省略；请根据函数名 `{title}` "
+                        f"与整体结构推断其作用）\n"
+                    )
+                    continue
+                snippet = body
+                if len(snippet) > _PER_SECTION:
+                    snippet = snippet[:_PER_SECTION] + "\n/* …本段过长，仅保留前半部分… */"
+                section_text += f"\n--- section: {title} ---\n{snippet}\n"
+                used += len(snippet)
 
         user = (
             f"静态解析：custom_functions={inp.parse_result.custom_functions} "
@@ -201,10 +234,11 @@ _SYSTEM_SUMMARY = (
     "现在请产出**算法摘要**与**技术标签**。\n"
     "严格输出以下 JSON，不要任何 markdown 包裹：\n"
     "{\n"
-    '  "algorithm_summary": "<200~400 字的中文摘要：先说做什么再说怎么做，'
+    '  "algorithm_summary": "<150~300 字的简体中文摘要：先说做什么再说怎么做，'
     '强调算法主干，不要复述每行代码>",\n'
     '  "techniques": [<从受控词表里挑 1~4 个>]\n'
     "}\n"
+    "**算法摘要必须使用简体中文**，禁止整句英文。\n"
     f"受控词表（只能从这里选）：{TECHNIQUE_VOCAB}"
 )
 

@@ -256,7 +256,7 @@ def run_analyze(code: str, opts: AssemblyOptions) -> dict[str, Any]:
         return out
     try:
         asm = get_assembly(opts)
-        out["diagnostics"] = asm.diagnostics
+        out["diagnostics"] = list(asm.diagnostics)
         result = asm.orchestrator.analyze_only(code)
         report: AnalysisReport | None = result.get("report")
         if report is None:
@@ -378,14 +378,25 @@ def run_collaborate(code: str, ask: str, opts: AssemblyOptions) -> dict[str, Any
         result = asm.orchestrator.analyze_then_generate(code, ask)
         report: AnalysisReport | None = result.get("report")
         gen: GeneratedShader | None = result.get("generated")
-        if report is None:
-            out["error"] = "Analyzer 未产出 report"
-            return out
         if gen is None:
-            out["error"] = "Generator 未产出 shader"
+            out["error"] = "Remixer 未产出改写后的 shader"
             return out
-        out["report_md"] = report.to_markdown()
-        out["report_json"] = report.model_dump()
+        # 改写模式默认跑一次轻量分析（single 策略，一次 LLM 调用）；
+        # 输出精简版"原代码简析"，格式与 Generator/Remixer 解释一致（3~6 句）。
+        if report is not None:
+            summary = report.algorithm_summary or ""
+            techniques = ", ".join(report.techniques) if report.techniques else "通用"
+            out["report_md"] = (
+                f"**原代码简析** · 技术标签：{techniques}\n\n"
+                f"{summary}"
+            )
+            out["report_json"] = report.model_dump()
+        else:
+            out["report_md"] = (
+                "_本次改写未单独分析原代码。_\n\n"
+                "下方「改写说明」已概述改动要点。"
+            )
+            out["report_json"] = {}
         out["new_code"] = gen.code
         out["new_explanation"] = gen.explanation
         out["compile_ok"] = bool(gen.compile_result.ok)

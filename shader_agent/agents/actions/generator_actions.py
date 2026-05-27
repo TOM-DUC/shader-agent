@@ -193,25 +193,49 @@ _SYSTEM_PROMPT_GENERATE = (
     "2. 仅使用 Shadertoy 默认的内置 uniform（iResolution / iTime / iMouse），"
     "不引用外部纹理或额外 pass（不要 `iChannel0`、`sampler2D`、自定义 uniform）；\n"
     "3. 代码自包含、能直接在 Shadertoy 编辑器中编译运行；\n"
-    "4. 优先简洁清晰，再考虑炫技；\n"
-    "5. 输出格式：先一行 `// EXPLAIN: <30 字以内中文一句话说明>`，"
-    "然后是纯 GLSL 代码，不要 markdown 代码围栏，不要多余注释。"
+    "4. 必须严格遵循需求中的 palette（调色板）：让主色调明显体现该倾向；"
+    "必须遵循 complexity（复杂度）：minimal=几行极简，simple=单一效果，"
+    "moderate=多技巧组合，complex=可炫技；dynamic=true 时必须用 iTime 做动画。\n"
+    "输出格式（务必遵守）：\n"
+    "先输出一段以 `// EXPLAIN:` 开头的**中文**说明块，可跨多行（每行都以 `//` 开头），"
+    "需说明清楚：① 使用的主要算法/技术（如 raymarching、SDF、值噪声、域重复等）；"
+     "② 如何体现指定的调色板与动态；③ 大致的实现思路。说明控制在 **3~6 句**。\n"
+    "说明块之后紧跟纯 GLSL 代码，不要 markdown 代码围栏。\n"
+    "全程用简体中文书写说明，不要使用英文整句。"
 )
 
-# 修正轮使用更聚焦的 system prompt：重点在修复，不在重写
+# 修正轮：只修编译错误，但解释仍面向"最终成品的设计思路"（与一次成功时一致）。
 _SYSTEM_PROMPT_FIX = (
-    "你是 ShaderGenerator 的修正模式。上一轮你生成的 GLSL 代码未通过编译/校验。\n"
-    "本轮目标：**最小改动** 修复指出的问题，**不要重写整段算法**。\n"
+    "你是 ShaderGenerator 的修正模式。上一轮生成的 GLSL 代码未通过编译/校验。\n"
+    "本轮目标：**最小改动** 修复指出的问题，**保留原有算法与结构**，不要重写。\n"
     "硬性约束（与首轮一致）：\n"
     "1. 入口 `void mainImage(out vec4 fragColor, in vec2 fragCoord)`；\n"
     "2. 仅使用 iResolution/iTime/iMouse；不引外部纹理；\n"
-    "3. 输出格式：先一行 `// EXPLAIN: <30 字以内中文一句话说明>`，"
-    "然后是完整的修复后代码，不要 markdown 围栏。\n"
-    "回应策略：\n"
-    "- 仔细阅读编译错误，定位到具体行 / 函数；\n"
-    "- 保留上一轮代码的整体结构与算法选型；\n"
-    "- 只改动错误相关的部分；\n"
-    "- 不要因为修复而额外引入新的特性。"
+    "修复策略：仔细读编译错误定位到具体行/函数；只改报错相关部分；"
+    "不要因修复而引入新特性或改变视觉效果。\n"
+    "输出格式：先输出以 `// EXPLAIN:` 开头的**中文**多行说明块（每行以 `//` 开头），"
+    "**说明这段 shader 最终成品的设计思路与主要算法、如何体现配色与动态**"
+    "（3~5 句，面向成品，不要写成『本次修复改了什么』）；说明之后紧跟完整的"
+    "修复后代码，不要 markdown 围栏。全程用简体中文。"
+)
+
+# 改写模式：基于原始代码做**最小化**修改，而非从零重写。
+# 注意：改写模式**不注入分析报告**，只给原始代码——避免提示词过长拖慢推理。
+_SYSTEM_PROMPT_REWRITE = (
+    "你是 ShaderRemixer。给你一段**已有的** Shadertoy GLSL 代码和一条改写指令，"
+    "请在**保留原代码整体结构与算法主干**的前提下，"
+    "**只针对改写指令所涉及的部分做最小化修改**（增删改尽量局部）。\n"
+    "严格要求：\n"
+    "1. 这是【改写】不是【重写】：除指令明确要求的改动外，其余代码（函数划分、"
+    "变量命名、算法流程）尽量原样保留，便于用户对比 diff；\n"
+    "2. 不要为了『更好』而擅自重构无关代码、替换算法或改变未被要求的视觉细节；\n"
+    "3. 仍须能在 Shadertoy 编译：入口 `void mainImage(out vec4 fragColor, "
+    "in vec2 fragCoord)`，仅用 iResolution/iTime/iMouse，不引外部纹理；\n"
+    "4. 直接基于给定代码改，不要参考或套用其他范例。\n"
+    "输出格式：先输出以 `// EXPLAIN:` 开头的**中文**多行说明块（每行以 `//` 开头），"
+     "**简明说明你改了哪些部分、保留了哪些原有算法**（3~6 句，"
+    "不要长篇分析原代码）；说明之后紧跟完整的改写后代码，不要 markdown 围栏。"
+    "全程用简体中文。"
 )
 
 
@@ -236,7 +260,8 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
         ]
         if spec.constraints:
             spec_lines.append(f"- constraints: {spec.constraints}")
-        if spec.reference_report is not None:
+        if spec.reference_report is not None and not spec.rewrite_mode:
+            # 仅非改写任务才注入分析报告；改写模式靠原始代码本身，避免提示词膨胀
             ref = spec.reference_report
             spec_lines.append(
                 "- 参考已分析的 shader：\n"
@@ -256,6 +281,17 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
                 + "\n\n请输出修复后的完整代码。"
             )
             sys_prompt = _SYSTEM_PROMPT_FIX
+        elif spec.rewrite_mode and spec.base_code.strip():
+            # 改写模式：只给原始代码 + 改写指令，不附带分析报告（提示词更短更快）
+            user = (
+                "原始代码（在此基础上做**最小化**修改，保留无关部分）：\n"
+                f"```glsl\n{spec.base_code[:6000]}\n```\n\n"
+                f"改写指令：{spec.description}\n\n"
+                + (f"调色板倾向：{spec.palette}\n" if spec.palette else "")
+                + (f"额外约束：{spec.constraints}\n" if spec.constraints else "")
+                + "\n请输出改写后的完整代码（仅在必要处改动）。"
+            )
+            sys_prompt = _SYSTEM_PROMPT_REWRITE
         else:
             # 首轮：spec + examples 主导
             ex_text = ""
@@ -294,10 +330,22 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
             s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
             s = re.sub(r"\s*```$", "", s)
         explanation = ""
-        m = re.match(r"//\s*EXPLAIN:\s*(.+?)\n", s)
-        if m:
-            explanation = m.group(1).strip()
-            s = s[m.end():]
+        # 解析以 `// EXPLAIN:` 开头的多行说明块：从 EXPLAIN 行起，
+        # 连续的以 `//` 开头的行都算说明，遇到第一行非注释（代码）即停止。
+        lines = s.splitlines()
+        m0 = re.match(r"\s*//\s*EXPLAIN:\s*(.*)", lines[0]) if lines else None
+        if m0:
+            expl_lines = [m0.group(1).strip()]
+            consumed = 1
+            for ln in lines[1:]:
+                mm = re.match(r"\s*//\s?(.*)", ln)
+                if mm is not None:
+                    expl_lines.append(mm.group(1).rstrip())
+                    consumed += 1
+                else:
+                    break
+            explanation = "\n".join(x for x in expl_lines if x).strip()
+            s = "\n".join(lines[consumed:])
         return DraftCodeOut(code=s.strip(), explanation=explanation)
 
     @staticmethod
