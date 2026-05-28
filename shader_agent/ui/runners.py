@@ -241,15 +241,88 @@ def png_to_pil(png_bytes: bytes | None):
 # 任务 1：仅分析
 # ============================================================
 
+_SEED_CODE_CACHE: dict[str, str] | None = None
+
+
+def _seed_code_index() -> dict[str, str]:
+    """{ shader_id: 完整 Image-pass 源码 }，懒加载并缓存。
+
+    seed shaders 全在内存里，带 code_image；用作"对照参考样本"的源码来源。
+    取不到（比如来自外部语料且未落盘）的样本，UI 会回退到 code_excerpt。
+    """
+    global _SEED_CODE_CACHE
+    if _SEED_CODE_CACHE is None:
+        try:
+            from shader_agent.corpus.seed_shaders import get_seed_shaders
+            _SEED_CODE_CACHE = {
+                s.shader_id: (s.code_image or "") for s in get_seed_shaders()
+            }
+        except Exception:
+            _SEED_CODE_CACHE = {}
+    return _SEED_CODE_CACHE
+
+
+def _references_with_source(similar: list[Any]) -> list[dict[str, Any]]:
+    """把 SimilarShader 列表转成带完整源码的轻量 dict，供 UI 源码对照展示。
+
+    每项：{ shader_id, name, distance, tags, code, is_excerpt }
+    code 取源优先级：seed 内存缓存 → 本地语料库磁盘 → code_excerpt 片段。
+    """
+    seed_index = _seed_code_index()
+    out: list[dict[str, Any]] = []
+    for s in similar or []:
+        sid = getattr(s, "shader_id", "") or ""
+        excerpt = getattr(s, "code_excerpt", "") or ""
+
+        # 1) seed 内存缓存
+        full = seed_index.get(sid, "")
+        # 2) 本地语料库磁盘兜底
+        if not full and sid:
+            full = _load_clean_code(sid)
+        out.append({
+            "shader_id": sid,
+            "name": getattr(s, "name", "") or sid or "(未命名)",
+            "distance": round(float(getattr(s, "distance", 0.0) or 0.0), 4),
+            "tags": list(getattr(s, "tags_topic", []) or []),
+            "code": full or excerpt,
+            "is_excerpt": (not full) and bool(excerpt),
+        })
+    return out
+
+
+_CORPUS_CACHE: dict[str, str] = {}
+
+
+def _load_clean_code(shader_id: str) -> str:
+    """从 data/shadertoy_corpus/clean/{id}.json 读取完整代码（带缓存）。"""
+    if shader_id in _CORPUS_CACHE:
+        return _CORPUS_CACHE[shader_id]
+    from pathlib import Path
+    import json
+    path = Path("data") / "shadertoy_corpus" / "clean" / f"{shader_id}.json"
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as f:
+                code = json.load(f).get("code_image", "") or ""
+            _CORPUS_CACHE[shader_id] = code
+            return code
+    except Exception:
+        pass
+    _CORPUS_CACHE[shader_id] = ""
+    return ""
+
+
 def run_analyze(code: str, opts: AssemblyOptions) -> dict[str, Any]:
     """分析 + 渲染原始 shader。返回 dict 给 UI 取字段：
-       { ok, error, report_md, report_json, image, elapsed_ms, diagnostics }"""
+       { ok, error, report_md, report_json, image, elapsed_ms,
+         diagnostics, references }"""
     t0 = time.perf_counter()
     out: dict[str, Any] = {
         "ok": False, "error": "",
         "report_md": "", "report_json": {},
         "image": None, "elapsed_ms": 0.0,
         "diagnostics": [],
+        "references": [],   # 检索到的对照参考样本（含完整源码，供 UI 展示）
     }
     if not code or not code.strip():
         out["error"] = "请输入 GLSL 代码"
@@ -264,6 +337,10 @@ def run_analyze(code: str, opts: AssemblyOptions) -> dict[str, Any]:
             return out
         out["report_md"] = report.to_markdown()
         out["report_json"] = report.model_dump()
+        # 把检索到的相似样本补成"带完整源码"的引用，供 UI 做源码对照展示。
+        # SimilarShader 自身只带 code_excerpt；完整代码按 shader_id 从 seed 取，
+        # 取不到则回退 excerpt。不改动任何 agent / orchestrator 逻辑。
+        out["references"] = _references_with_source(report.similar_shaders)
         # 顺手渲染源码（便于"分析"也能看到效果）
         png, png_err = render_code_to_png(code, opts)
         if png_err:
