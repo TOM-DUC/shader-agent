@@ -21,7 +21,7 @@ requests>=2.32.0
 beautifulsoup4>=4.12.0
 tqdm>=4.66.0
 
-# === 阶段二新增：知识库 ===
+# === 知识库：向量 + 关键词检索 ===
 # 向量库（本地持久化）
 chromadb>=0.5.5
 # 本地嵌入模型加载
@@ -30,8 +30,10 @@ huggingface-hub>=0.24.0
 # 数值与表格
 numpy>=1.26.0
 pandas>=2.2.0
+# BM25 关键词检索（纯 Python，面向 GLSL 标识符分词）
+rank-bm25>=0.2.2
 
-# === 阶段六新增：headless GLSL 渲染 ===
+# === headless GLSL 渲染 ===
 # 轻量 OpenGL 包装，pip 一行装好，跨平台
 moderngl>=5.10
 # 截图 PNG 编码 + 给多模态 LLM 用
@@ -44,5 +46,5 @@ pytest>=8.2.0
 pytest-asyncio>=0.23.0
 pytest-rerunfailures>=14.0   # 给 v4-pro 偶发抖动的 chat_smoke 用 --reruns
 
-# === 阶段七新增：Gradio UI ===
+# === Gradio UI ===
 gradio>=4.40,<5.0          # Blocks API + gr.Code(language=...) + gr.Examples

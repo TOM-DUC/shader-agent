@@ -1,14 +1,13 @@
-"""Analyzer 的 Action 集合（4 个）。
+"""Analyzer 的 Action 集合。
 
-工作流借鉴 GPT-Researcher 的"plan → search → synthesize"：
+工作流采用"解析 → 检索 → 讲解 → 汇总"四段：
 
   1. ParseShaderAction       — 静态解析 GLSL（无 LLM）：识别 mainImage、uniforms、关键函数
-  2. RetrieveSimilarAction   — 用 corpus.vector_store 检索相似 shader（无 LLM）
+  2. RetrieveSimilarAction   — 用混合检索器（或向量库）检索相似 shader（无 LLM）
   3. ExplainShaderAction     — 调 LLM：分段讲解 + 算法摘要 + 关键变量
   4. SynthesizeReportAction  — 把前三步合并成 AnalysisReport（无 LLM，纯组装）
 
-阶段三：ExplainShaderAction 留可注入的 llm_fn，便于单测用 stub；
-阶段四：把 llm_fn 真接到 DeepSeekClient。
+ExplainShaderAction 的 llm_fn 可注入，便于单测用 stub 或替换为不同模型。
 """
 from __future__ import annotations
 
@@ -87,6 +86,7 @@ class RetrieveSimilarIn(BaseModel):
     code: str
     top_k: int = 3
     where: dict[str, Any] | None = None
+    want_tags: list[str] = Field(default_factory=list)
 
 
 class RetrieveSimilarOut(BaseModel):
@@ -94,25 +94,36 @@ class RetrieveSimilarOut(BaseModel):
 
 
 class RetrieveSimilarAction(Action[RetrieveSimilarIn, RetrieveSimilarOut]):
-    """从 corpus.vector_store 检索相似样本。
+    """检索与输入代码相似的高质量参考样本。
 
-    依赖：通过 __init__(vector_store=...) 注入 ShaderVectorStore。
-    若未注入，则返回空（不报错，便于单测）。
+    依赖（按优先级）：
+      - retriever: HybridRetriever（向量 + BM25 + 标签/质量过滤 + 重排 + 阈值），
+        通过 __init__(retriever=...) 注入，命中父子分块时检索精度最高；
+      - vector_store: ShaderVectorStore，作为没有 retriever 时的兼容回退。
+    两者都缺失时返回空（不报错，便于单测）。
     """
     name = "retrieve_similar"
     input_schema = RetrieveSimilarIn
     output_schema = RetrieveSimilarOut
 
     def _run(self, inp: RetrieveSimilarIn) -> RetrieveSimilarOut:
-        vstore = self.dep("vector_store")
-        if vstore is None:
-            return RetrieveSimilarOut(items=[])
-        # 用代码前 1500 字符作为 query，与建库时的 doc_text 拼接策略对齐
         query = (inp.code or "")[:1500]
         if not query.strip():
             return RetrieveSimilarOut(items=[])
+
+        # 优先走混合检索器
+        retriever = self.dep("retriever")
+        if retriever is not None:
+            hits = retriever.retrieve(query, top_k=inp.top_k, want_tags=inp.want_tags)
+            items = [SimilarShader(**h.to_similar_payload()) for h in hits]
+            return RetrieveSimilarOut(items=items)
+
+        # 回退：旧的 shader 级向量检索
+        vstore = self.dep("vector_store")
+        if vstore is None:
+            return RetrieveSimilarOut(items=[])
         hits = vstore.query_by_text(query, top_k=inp.top_k, where=inp.where)
-        items: list[SimilarShader] = []
+        items = []
         for h in hits:
             md = h.get("metadata") or {}
             tags = (md.get("tags_topic") or "")
@@ -169,7 +180,7 @@ class ExplainShaderAction(Action[ExplainShaderIn, ExplainShaderOut]):
 
     依赖：
       - llm_fn: 由 Role 在构造时通过 __init__ 注入；签名见 LLMFn。
-        单测时传 stub；阶段四接到 DeepSeek。
+        单测时传 stub；接到 DeepSeek。
     """
     name = "explain_shader"
     input_schema = ExplainShaderIn
@@ -205,7 +216,7 @@ class ExplainShaderAction(Action[ExplainShaderIn, ExplainShaderOut]):
     def _run(self, inp: ExplainShaderIn) -> ExplainShaderOut:
         llm_fn: LLMFn | None = self.dep("llm_fn")
         if llm_fn is None:
-            # 阶段三占位：无 LLM 时返回基于解析结果的最小可用 explain
+            # 占位：无 LLM 时返回基于解析结果的最小可用 explain
             return self._fallback(inp)
         messages = self._build_messages(inp)
         text = llm_fn(messages)

@@ -187,11 +187,15 @@ def on_generate(user_text, palette, complexity, dynamic,
            res.get("references") or [])
 
 
+
+
+
 # ============================================================
 # Tab 3 · Remixer 回调
 # ============================================================
 
-def on_remix(code, ask, render_backend, use_vstore, use_cache, critique, max_fix, top_k):
+def on_remix(code, ask,
+             render_backend, use_vstore, use_cache, critique, max_fix, top_k):
     yield (gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(),
            running_html("正在基于原代码改写（最小化改写 → 编译校验）…"), "", gr.update())
 

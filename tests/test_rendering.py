@@ -1,4 +1,4 @@
-"""阶段六：渲染验证闭环单测。
+"""渲染验证闭环单测。
 
 策略：
   - 默认全部用 MockCompiler / MockRenderer，离线可跑；
@@ -134,7 +134,7 @@ def test_generator_uses_mock_compiler_and_fixes_error():
 
     gen = ShaderGenerator(
         llm_fn=stub_llm,
-        compiler=MockCompiler(),     # 阶段六注入点
+        compiler=MockCompiler(),     # 注入点
         max_fix_loops=2,
     )
     out = gen.handle(Message(role="user", content="anything"))

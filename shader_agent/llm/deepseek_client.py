@@ -6,7 +6,7 @@
   3. stream      —— 流式输出
   4. function    —— Function Calling / Tool Use
 
-阶段三以后，agent 通过本模块统一访问 LLM。
+以后，agent 通过本模块统一访问 LLM。
 """
 from __future__ import annotations
 

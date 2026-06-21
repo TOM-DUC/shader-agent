@@ -53,6 +53,7 @@ class _Assembly:
     orchestrator: Orchestrator
     backend_label: str
     vstore_label: str
+    retriever: Any = None
     diagnostics: list[str] = field(default_factory=list)
 
 
@@ -102,6 +103,41 @@ def _build_vector_store(use_vstore: str):
         return None, f"向量库不可用: {e}"
 
 
+def _build_retriever(vstore: Any):
+    """围绕向量库装配混合检索器（向量 + BM25 + 父文档 + 可选重排）。
+
+    任一辅助组件缺失都不致命：HybridRetriever 内部会自动降级为 shader 级向量检索。
+    """
+    if vstore is None:
+        return None, "无向量库，混合检索不可用"
+    try:
+        from shader_agent.corpus.keyword_store import KeywordStore
+        from shader_agent.corpus.parent_store import ParentDocumentStore
+        from shader_agent.corpus.reranker import Reranker
+        from shader_agent.corpus.retriever import HybridRetriever
+
+        kstore = KeywordStore.load()
+        pstore = ParentDocumentStore()
+        reranker = Reranker(
+            model_name=settings.retrieval.reranker_model,
+            enabled=settings.retrieval.use_rerank,
+        )
+        retr = HybridRetriever(
+            vector_store=vstore,
+            keyword_store=kstore,
+            parent_store=pstore,
+            reranker=reranker,
+        )
+        chunk_n = vstore.chunk_count()
+        if chunk_n > 0 and pstore.count() > 0:
+            label = f"混合检索（{chunk_n} 子块 / BM25 {kstore.count()}）"
+        else:
+            label = "混合检索（子块库为空，降级为向量检索）"
+        return retr, label
+    except Exception as e:
+        return None, f"混合检索装配失败，降级为向量检索: {e}"
+
+
 def _build_render_backend(prefer: str):
     """决定 compiler/renderer 用真 GL 还是 mock。"""
     from shader_agent.rendering import GLSLCompiler, GLSLRenderer
@@ -145,6 +181,10 @@ def get_assembly(opts: AssemblyOptions) -> _Assembly:
     vstore, vs_msg = _build_vector_store(opts.use_vector_store)
     diag.append("向量库: " + vs_msg)
 
+    # 2b. 混合检索器（向量 + BM25 + 父文档 + 可选重排）
+    retriever, retr_msg = _build_retriever(vstore)
+    diag.append("检索: " + retr_msg)
+
     # 3. 渲染后端
     compiler, renderer, backend_label = _build_render_backend(opts.render_backend)
     diag.append("渲染后端: " + backend_label)
@@ -152,6 +192,7 @@ def get_assembly(opts: AssemblyOptions) -> _Assembly:
     # 4. 装配 Analyzer
     analyzer = ShaderAnalyzer(
         vector_store=vstore,
+        retriever=retriever,
         llm_fn=chat_fn,
         walkthrough_llm=json_fn,
         summary_llm=json_fn,
@@ -165,6 +206,7 @@ def get_assembly(opts: AssemblyOptions) -> _Assembly:
     # 5. 装配 Generator
     generator = ShaderGenerator(
         vector_store=vstore,
+        retriever=retriever,
         llm_fn=code_fn,
         compiler=compiler,
         renderer=renderer,
@@ -186,6 +228,7 @@ def get_assembly(opts: AssemblyOptions) -> _Assembly:
         orchestrator=Orchestrator(analyzer=analyzer, generator=generator),
         backend_label=backend_label,
         vstore_label=vs_msg,
+        retriever=retriever,
         diagnostics=diag,
     )
     _ASSEMBLY_CACHE[key] = asm
@@ -411,7 +454,6 @@ def run_generate(user_text: str, opts: AssemblyOptions,
         png, png_err = render_code_to_png(g.code, opts)
         if png_err:
             out["diagnostics"].append("生成侧渲染: " + png_err)
-        out["image"] = png_to_pil(png)
         out["ok"] = True
     except Exception as e:
         logger.exception("[ui] run_generate 异常")
@@ -488,7 +530,6 @@ def run_collaborate(code: str, ask: str, opts: AssemblyOptions) -> dict[str, Any
         png1, png_err = render_code_to_png(gen.code, opts)
         if png_err:
             out["diagnostics"].append("协作侧新版渲染: " + png_err)
-        out["image_after"] = png_to_pil(png1)
         out["ok"] = True
     except Exception as e:
         logger.exception("[ui] run_collaborate 异常")

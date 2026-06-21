@@ -1,11 +1,13 @@
 """ShaderRecord 数据模型。
 
-统一描述一条 shader 记录，贯穿采集 → 清洗 → 打标 → 向量化 整条流水线。
+统一描述一条 shader 记录，贯穿采集、清洗、打标、质量验证、向量化整条流水线。
+质量与来源字段用于在检索时做过滤与可追溯，使知识库只保留经过验证的高质量参考。
 """
 from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,14 +37,29 @@ class ShaderRecord(BaseModel):
     passes: list[RenderPass] = Field(default_factory=list)
     source: str = "shadertoy"  # 来源：shadertoy / seed / local
 
-    # ---- 清洗与打标阶段产物 ----
+    # ---- 清洗与打标产物 ----
     code_image: str = ""           # 仅 Image pass 的代码（首版主要用）
     code_common: str = ""          # 可选的 Common pass
     code_hash: str = ""            # 去重用
     tags_topic: list[str] = Field(default_factory=list)  # 标签：raymarching/sdf/...
     has_external_assets: bool = False  # texture/cubemap/keyboard/buffer 等外部输入
 
-    # ---- 向量化阶段产物（不进 vector store 元数据，仅追踪用）----
+    # ---- 来源与许可（可追溯）----
+    source_url: str = ""           # 原始链接，便于回溯与署名
+    license: str = ""              # 许可证标识（空表示未知）
+
+    # ---- 质量验证产物（决定是否进入高质量参考库）----
+    compile_ok: bool = False       # 是否通过静态/真实编译
+    render_ok: bool = False        # 是否成功渲染出非空帧
+    quality_score: float = 0.0     # 综合质量分（0~1）
+
+    # ---- 静态分析产物（供检索与父子分块使用）----
+    algorithm_summary: str = ""    # 算法摘要（静态启发式或可选 LLM）
+    key_functions: list[str] = Field(default_factory=list)  # 关键自定义函数名
+    visual_features: list[str] = Field(default_factory=list)  # 视觉特征关键词
+    indexed_at: str = ""           # 入库时间（ISO 字符串）
+
+    # ---- 向量化产物（不进 vector store 元数据，仅追踪用）----
     embedding_dim: int = 0
 
     # ---------- 工具方法 ----------
@@ -90,7 +107,19 @@ class ShaderRecord(BaseModel):
             "tags_raw": ",".join(self.tags_raw),
             "has_external_assets": bool(self.has_external_assets),
             "code_chars": len(self.code_image or ""),
+            # 质量与来源：用于检索时过滤与排序、结果可追溯
+            "source_url": self.source_url,
+            "license": self.license,
+            "compile_ok": bool(self.compile_ok),
+            "render_ok": bool(self.render_ok),
+            "quality_score": float(self.quality_score),
+            "key_functions": ",".join(self.key_functions),
+            "visual_features": ",".join(self.visual_features),
         }
+
+    def mark_indexed(self) -> None:
+        """记录入库时间（ISO8601，UTC）。"""
+        self.indexed_at = datetime.now(timezone.utc).isoformat()
 
     def save_json(self, dst_dir: Path) -> Path:
         """单条记录落盘成 JSON（便于 diff / 复跑）。"""

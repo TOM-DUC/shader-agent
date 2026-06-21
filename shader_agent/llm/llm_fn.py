@@ -2,7 +2,7 @@
 
 为什么不直接传 deepseek.chat 给 Action？
 1. Action 的 llm_fn 签名只要 (messages) -> str；DeepSeekClient.chat 有更多可选参数。
-2. 阶段四需要：JSON 模式开关 + 重试 + 调试缓存 + token 统计聚合，
+2. 需要：JSON 模式开关 + 重试 + 调试缓存 + token 统计聚合，
    这些是 LLM 调用层关心的事，不应污染 Action 代码。
 
 提供两个工厂：
@@ -229,7 +229,7 @@ def _do_call(
     return text
 
 
-# ---------------- 阶段六：多模态自评 ----------------
+# ---------------- 多模态自评 ----------------
 
 # 多模态 critique 的签名：(code, spec_text, image_b64) -> str(JSON)
 # 与 SelfCritiqueAction 的 critique_fn 钩子签名对齐。

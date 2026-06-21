@@ -6,7 +6,7 @@ Shadertoy 编辑器只让用户写：
 实际编译时它会包成一个完整 fragment shader，注入它的若干内置 uniforms。
 我们这里复现该包装，以让用户给我们的代码能在 moderngl 里编译运行。
 
-注入的 uniforms 与 Shadertoy 一致（仅支持无外部纹理的子集，与阶段二的语料库清洗策略对齐）：
+注入的 uniforms 与 Shadertoy 一致（仅支持无外部纹理的子集，与的语料库清洗策略对齐）：
     iResolution    vec3
     iTime          float
     iTimeDelta     float

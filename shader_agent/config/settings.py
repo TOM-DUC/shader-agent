@@ -53,7 +53,7 @@ class PathsConfig(BaseSettings):
 
 
 class CorpusConfig(BaseSettings):
-    """Shadertoy 语料库构建配置（阶段二）。"""
+    """Shadertoy 语料库构建配置。"""
     shadertoy_api_base: str = "https://www.shadertoy.com/api/v1"
     max_shaders: int = 300
     min_likes: int = 30
@@ -66,7 +66,7 @@ class CorpusConfig(BaseSettings):
 
 
 class EmbeddingConfig(BaseSettings):
-    """嵌入模型配置（阶段二）。"""
+    """嵌入模型配置。"""
     model_name: str = "BAAI/bge-m3"
     device: str = "auto"
     normalize_embeddings: bool = True
@@ -75,9 +75,23 @@ class EmbeddingConfig(BaseSettings):
 
 
 class VectorStoreConfig(BaseSettings):
-    """向量库配置（阶段二）。"""
+    """向量库配置。"""
     collection_name: str = "shadertoy_shaders"
     distance: Literal["cosine", "l2", "ip"] = "cosine"
+
+
+class RetrievalConfig(BaseSettings):
+    """混合检索配置：召回规模、融合权重、阈值与重排开关。"""
+    recall_k: int = 20            # 向量与关键词各自的召回上限
+    w_vector: float = 0.50        # 向量相关度权重
+    w_bm25: float = 0.25          # 关键词（BM25）权重
+    w_tag: float = 0.15           # 标签匹配度权重
+    w_quality: float = 0.10       # 质量分权重
+    min_score: float = 0.15       # 融合分阈值，低于此值不返回参考
+    use_rerank: bool = True       # 是否启用交叉编码器重排
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+
+
 
 
 class Settings(BaseSettings):
@@ -99,7 +113,7 @@ class Settings(BaseSettings):
         default="https://api.deepseek.com",
         alias="DEEPSEEK_BASE_URL",
     )
-    # 阶段二新增；允许为空字符串（无 key 时走 seed 流程）
+    # 允许为空字符串（无 key 时走 seed 流程）
     shadertoy_api_key: str = Field(default="", alias="SHADERTOY_API_KEY")
 
     # 嵌套配置（来自 config.yaml）
@@ -110,6 +124,7 @@ class Settings(BaseSettings):
     corpus: CorpusConfig = CorpusConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
+    retrieval: RetrievalConfig = RetrievalConfig()
 
     # 项目根
     project_root: Path = PROJECT_ROOT
@@ -148,6 +163,7 @@ class Settings(BaseSettings):
         corpus = CorpusConfig(**(yaml_data.get("corpus") or {}))
         embedding = EmbeddingConfig(**(yaml_data.get("embedding") or {}))
         vstore = VectorStoreConfig(**(yaml_data.get("vector_store") or {}))
+        retrieval = RetrievalConfig(**(yaml_data.get("retrieval") or {}))
 
         return cls(
             llm=llm,
@@ -157,6 +173,7 @@ class Settings(BaseSettings):
             corpus=corpus,
             embedding=embedding,
             vector_store=vstore,
+            retrieval=retrieval,
         )
 
 

@@ -1,4 +1,4 @@
-"""阶段一验收脚本：依次跑通 chat / coder / stream / function calling。
+"""验收脚本：依次跑通 chat / coder / stream / function calling。
 
 用法（在项目根目录）：
     python -m scripts.verify_deepseek

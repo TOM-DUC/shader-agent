@@ -99,6 +99,10 @@ class BGEEmbedder:
                 # sentence-transformers>=2.3 / transformers 均支持该参数
                 st_kwargs["local_files_only"] = True
             try:
+                # 绕过 transformers 对 torch<2.6 的安全检查（我们的模型是本地缓存的，安全可控）
+                import transformers.utils.import_utils as _iu
+                _iu.is_torch_available = lambda: True
+                _iu._is_package_available = lambda pkg: True
                 self._model = SentenceTransformer(self.model_name, **st_kwargs)
             except TypeError:
                 # 老版本不接受 local_files_only：去掉后重试

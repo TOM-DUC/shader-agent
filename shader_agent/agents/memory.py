@@ -1,12 +1,12 @@
-"""角色私有的简易记忆模块。
+"""角色私有的工作记忆模块。
 
-设计极简：
-  - 一条 Memory 对应一个 Role 实例；
-  - 内部存的是 Message 列表；
-  - 提供按 role / payload_type 过滤、按时间 / id 检索、按 parent 链回溯；
-  - 不做持久化；阶段六以后若需要长程记忆再升级。
+承担单次运行内的消息记录：一条 WorkingMemory 对应一个 Role 实例，内部存 Message
+列表，提供按 role / payload_type 过滤、按时间 / id 检索、按 parent 链回溯。
 
-性能：列表 O(n) 检索对当前规模（单会话 <100 条）完全够。
+这是"会话内短程记忆"，不做持久化；跨会话的情节记忆与经验记忆由 shader_agent.memory
+子系统负责，两者职责分明，互不混淆。
+
+性能：列表 O(n) 检索对单会话规模（<100 条）完全够用。
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from typing import Iterable
 from shader_agent.agents.schemas import Message
 
 
-class Memory:
-    """单角色的会话记忆。"""
+class WorkingMemory:
+    """单角色的会话内工作记忆。"""
 
     def __init__(self) -> None:
         self._items: list[Message] = []
@@ -71,4 +71,8 @@ class Memory:
         return len(self._items)
 
     def __repr__(self) -> str:
-        return f"Memory(n={len(self._items)})"
+        return f"WorkingMemory(n={len(self._items)})"
+
+
+# 向后兼容别名：旧代码以 `Memory` 引用工作记忆，保持不破坏导入。
+Memory = WorkingMemory

@@ -1,4 +1,4 @@
-"""阶段六：headless GLSL 渲染与编译模块。
+"""headless GLSL 渲染与编译模块。
 
 对外暴露：
   - wrap_shadertoy_fragment(code)            : 把 Shadertoy fragment 包成完整 GLSL 330

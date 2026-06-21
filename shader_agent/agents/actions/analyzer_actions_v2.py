@@ -1,4 +1,4 @@
-"""阶段四：四段式 Analyzer Actions。
+"""四段式 Analyzer Actions。
 
 设计原则（来自 GPT-Researcher 的经验）：
 - 把"巨型 prompt"拆成 4 段，每段独立可测、可重试；

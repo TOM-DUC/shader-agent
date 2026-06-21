@@ -1,4 +1,4 @@
-"""阶段四单测：四段式 Analyzer 的 v2 Actions。
+"""单测：四段式 Analyzer 的 Actions。
 
 约束：
   - 不调真 LLM，全部用 stub；
@@ -274,7 +274,7 @@ def test_analyzer_fourstage_end_to_end():
 
 
 def test_analyzer_strategy_single_still_works():
-    """阶段三的 single 策略不能被破坏。"""
+    """single 策略不能被破坏。"""
     code = "void mainImage(out vec4 c, in vec2 p){c=vec4(1.);}"
     analyzer = ShaderAnalyzer(strategy="single", llm_fn=None)
     out = analyzer.handle(Message(role="user", content=code, payload={"code": code}))

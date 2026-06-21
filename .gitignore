@@ -31,3 +31,6 @@ MetaGPT/
 
 # 历史计划文件
 plan/
+
+# 工作区工具元数据
+.sisyphus/

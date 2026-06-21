@@ -5,10 +5,10 @@
   1. ParseSpecAction      — 解析用户自由文本 → GenerationSpec（无 LLM，规则关键词）
   2. RetrieveExamplesAction — 检索风格相似的 in-context 例子（无 LLM）
   3. DraftCodeAction      — 调 LLM 生成 GLSL 草稿
-  4. ValidateCodeAction   — 编译验证（阶段六真正实现；阶段三只做静态规则校验）
+  4. ValidateCodeAction   — 编译验证（静态规则校验 + 可选真实编译）
   + 修正循环由 Role.handle() 编排，不单独做成一个 Action（流程性强、状态多）
 
-阶段三：DraftCodeAction 留可注入 llm_fn；ValidateCodeAction 给桩。
+DraftCodeAction 留可注入 llm_fn；ValidateCodeAction 给桩。
 """
 from __future__ import annotations
 
@@ -129,17 +129,19 @@ class RetrieveExamplesOut(BaseModel):
 
 
 class RetrieveExamplesAction(Action[RetrieveExamplesIn, RetrieveExamplesOut]):
-    """检索与 spec 相符的 in-context 例子。"""
+    """检索与 spec 相符的 in-context 例子。
+
+    依赖（按优先级）：
+      - retriever: HybridRetriever，命中父子分块时按效果类型/配色/复杂度检索最准；
+      - vector_store: ShaderVectorStore，作为兼容回退。
+    """
     name = "retrieve_examples"
     input_schema = RetrieveExamplesIn
     output_schema = RetrieveExamplesOut
 
     def _run(self, inp: RetrieveExamplesIn) -> RetrieveExamplesOut:
-        vstore = self.dep("vector_store")
-        if vstore is None:
-            return RetrieveExamplesOut(items=[])
-        # query 拼接：description + effect_type + palette
         spec = inp.spec
+        # query 拼接：description + effect_type + palette
         query_parts = [spec.description]
         if spec.effect_type:
             query_parts.append(spec.effect_type)
@@ -149,13 +151,19 @@ class RetrieveExamplesAction(Action[RetrieveExamplesIn, RetrieveExamplesOut]):
         if not q:
             return RetrieveExamplesOut(items=[])
 
-        where = None
-        if spec.effect_type:
-            # ChromaDB metadata 过滤：tags_topic 在建库时存的是 ","-join 字符串
-            # 用 "包含" 不直接支持；这里改用宽松检索 + 后续 rerank
-            pass
-        hits = vstore.query_by_text(q, top_k=inp.top_k, where=where)
-        items: list[SimilarShader] = []
+        want_tags = [spec.effect_type] if spec.effect_type else []
+
+        retriever = self.dep("retriever")
+        if retriever is not None:
+            hits = retriever.retrieve(q, top_k=inp.top_k, want_tags=want_tags)
+            items = [SimilarShader(**h.to_similar_payload()) for h in hits]
+            return RetrieveExamplesOut(items=items)
+
+        vstore = self.dep("vector_store")
+        if vstore is None:
+            return RetrieveExamplesOut(items=[])
+        hits = vstore.query_by_text(q, top_k=inp.top_k)
+        items = []
         for h in hits:
             md = h.get("metadata") or {}
             tags = (md.get("tags_topic") or "")
@@ -239,10 +247,22 @@ _SYSTEM_PROMPT_REWRITE = (
 )
 
 
+def _clip_prompt_text(text: str, limit: int) -> str:
+    text = text or ""
+    if len(text) <= limit: return text
+    return text[:limit].rstrip() + "\n// ..."
+
+def _format_reference_for_prompt(ex, idx, limit=3200):
+    tags = ",".join(ex.tags_topic) if ex.tags_topic else "-"
+    chunks = ", ".join(ex.matched_chunks[:5]) if ex.matched_chunks else "-"
+    context = (ex.reference_context or ex.code_excerpt or "").strip()
+    return (f"[reference {idx}] {ex.name or ex.shader_id} (id={ex.shader_id}, distance={ex.distance:.3f}, tags={tags})\nmatched_chunks: {chunks}\n下面是从该参考中抽取的算法摘要、命中函数块和必要上下文。只学习实现思路与局部技巧，不要整段照抄。\n{_clip_prompt_text(context, limit)}")
+
+
 class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
     """调 LLM 生成 GLSL 草稿。
 
-    依赖：llm_fn (Callable)。无则返回 stub 代码（用于阶段三 dry-run 测试）。
+    依赖：llm_fn (Callable)。无则返回 stub 代码（用于 dry-run 测试）。
     """
     name = "draft_code"
     input_schema = DraftCodeIn
@@ -297,12 +317,16 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
             ex_text = ""
             if inp.examples:
                 ex_lines = []
+                budget = 8200; used = 0
                 for i, ex in enumerate(inp.examples[:3], 1):
-                    ex_lines.append(
-                        f"[example {i}] {ex.name} (tags={','.join(ex.tags_topic)})\n"
-                        f"{ex.code_excerpt}"
-                    )
-                ex_text = "\n\n参考样本（仅供风格参考，不要照抄）：\n" + "\n\n".join(ex_lines)
+                    per_ref = 3400 if i == 1 else 2400
+                    block = _format_reference_for_prompt(ex, i, limit=per_ref)
+                    if used + len(block) > budget:
+                        block = _clip_prompt_text(block, max(900, budget - used))
+                    if block.strip():
+                        ex_lines.append(block); used += len(block)
+                    if used >= budget: break
+                ex_text = "\n\n参考样本（只参考算法结构、函数写法和视觉风格，不要照抄）：\n" + "\n\n".join(ex_lines)
             user = (
                 "需求 spec：\n" + "\n".join(spec_lines) + ex_text +
                 "\n\n请输出 shader 代码（务必满足硬性约束）。"
@@ -352,7 +376,7 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
     def _stub_draft(inp: DraftCodeIn) -> DraftCodeOut:
         """无 LLM 时的占位输出：根据 spec.effect_type 给出一个最小合规 shader。
 
-        仅用于阶段三 dry-run；阶段五正式接 LLM 后这条路径不会被走。
+        仅用于无 LLM 时的 dry-run 回退路径。
         """
         et = inp.spec.effect_type or "2d-pattern"
         templates = {
@@ -442,9 +466,9 @@ _GLSL_TYPO_HINTS: dict[str, str] = {
 class ValidateCodeAction(Action[ValidateCodeIn, ValidateCodeOut]):
     """静态规则校验 + 可选的真实 GLSL 编译。
 
-    阶段三：规则校验（mainImage 存在 / 大括号配平 / 禁用外部 sampler）
-    阶段五：增加 GLSL 静态可疑模式（拼写、HLSL 误用、注释包裹的关键字）
-    阶段六：通过 __init__(compiler=...) 注入 moderngl 编译器，做真实 compile。
+    规则校验（mainImage 存在 / 大括号配平 / 禁用外部 sampler）
+    增加 GLSL 静态可疑模式（拼写、HLSL 误用、注释包裹的关键字）
+    通过 __init__(compiler=...) 注入 moderngl 编译器，做真实 compile。
 
     错误格式：每行一条，便于 LLM 修正轮按行读取。
     """
@@ -458,7 +482,7 @@ class ValidateCodeAction(Action[ValidateCodeIn, ValidateCodeOut]):
         errors: list[str] = []
         warnings: list[str] = []
 
-        # === 阶段三规则：硬性入口 / 配对 / 外部 sampler ===
+        # === 规则：硬性入口 / 配对 / 外部 sampler ===
         if "mainImage" not in code:
             errors.append("missing mainImage entry function")
         # 括号配平（先剥注释，避免注释里的括号被算入）
@@ -476,13 +500,13 @@ class ValidateCodeAction(Action[ValidateCodeIn, ValidateCodeOut]):
         if re.search(r"\bsampler2D\b|\bsamplerCube\b|\biChannel[0-9]\b", stripped):
             errors.append("references external sampler/iChannelN (not allowed)")
 
-        # === 阶段五新增：HLSL 误用 ===
+        # === HLSL 误用 ===
         for bad, fix in _GLSL_TYPO_HINTS.items():
             # 以词边界匹配避免误杀（"frac" 不能匹配 "fract"）
             if re.search(rf"\b{re.escape(bad)}\b", stripped):
                 errors.append(f"unknown identifier `{bad}` — in GLSL use `{fix}`")
 
-        # === 阶段五新增：mainImage 签名校验 ===
+        # === mainImage 签名校验 ===
         sig = re.search(
             r"\bvoid\s+mainImage\s*\(\s*out\s+vec4\s+\w+\s*,\s*in\s+vec2\s+\w+\s*\)",
             stripped,
@@ -493,7 +517,7 @@ class ValidateCodeAction(Action[ValidateCodeIn, ValidateCodeOut]):
                 "`void mainImage(out vec4 fragColor, in vec2 fragCoord)`"
             )
 
-        # === 阶段五新增：fragColor 必须被赋值 ===
+        # === fragColor 必须被赋值 ===
         # 简单启发：找 mainImage body 内是否有 fragColor= 之类
         if sig:
             body_start = sig.end()
@@ -503,7 +527,7 @@ class ValidateCodeAction(Action[ValidateCodeIn, ValidateCodeOut]):
             elif not re.search(r"\bfrag\w*\s*=", body) and not re.search(r"out\s+vec4\s+(\w+)", sig.group()):
                 warnings.append("fragColor seems not assigned")
 
-        # === 可选：阶段六注入真实编译器 ===
+        # === 可选：注入真实编译器 ===
         compiler = self.dep("compiler")
         if compiler is not None and not errors:
             try:
@@ -537,13 +561,13 @@ def _strip_comments(code: str) -> str:
 
 
 # =====================================================================
-# 5. SelfCritiqueAction (阶段五新增，多模态自评占位)
+# 5. SelfCritiqueAction (新增，多模态自评占位)
 # =====================================================================
 
 class SelfCritiqueIn(BaseModel):
     code: str
     spec: GenerationSpec
-    # 阶段六接渲染器后，会把截图（base64 PNG 字符串）传入
+    # 接渲染器后，会把截图（base64 PNG 字符串）传入
     rendered_image_b64: str = ""
     # 即使没有多模态/截图，也可以让 LLM 基于编译结果做文本自评
     compile_ok: bool = True

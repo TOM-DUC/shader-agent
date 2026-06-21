@@ -2,15 +2,18 @@
 
 设计：
 - 使用 PersistentClient，数据保存到 data/vector_db/；
-- **不**用 ChromaDB 自带的嵌入函数，自己用 BGEEmbedder 提前算好 embedding 再 upsert，
+- 不用 ChromaDB 自带的嵌入函数，自己用 BGEEmbedder 提前算好 embedding 再 upsert，
   好处：完全可控、可替换、不被 chroma 默认 onnx 模型偷偷下载；
-- 文档拼接来自 ShaderRecord.to_doc_text()；
+- 同时支持两种粒度：
+  * 旧的 shader 级（一条 shader 一个向量，向后兼容）；
+  * 新的子块级（父子分块，检索精度更高）。子块向量带 parent_id 元数据，
+    命中后由 ParentDocumentStore 回溯完整 shader。
 - 元数据（用于过滤）来自 ShaderRecord.to_metadata()；
-- ChromaDB 0.5+ API：cosine 距离配置在 collection metadata 的 hnsw:space。
+- ChromaDB cosine 距离配置在 collection metadata 的 hnsw:space。
 
 检索接口：
-  - query_by_text(text, top_k, where=None) -> list[dict]
-    返回每条命中的 {shader_id, name, distance, metadata, document}
+  - query_by_text(text, top_k, where=None) -> list[dict]  # shader 级
+  - query_chunks(text, top_k, where=None) -> list[dict]   # 子块级
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from typing import Any
 import numpy as np
 
 from shader_agent.config.settings import settings
+from shader_agent.corpus.chunker import ShaderChunk, chunk_shader
 from shader_agent.corpus.models import ShaderRecord
 from shader_agent.embeddings.bge_embedder import BGEEmbedder, get_embedder
 from shader_agent.utils.logger import logger
@@ -48,6 +52,7 @@ class ShaderVectorStore:
             name=self.collection_name,
             metadata={"hnsw:space": self.distance},
         )
+        self._chunk_coll = None  # 子块集合惰性创建
         logger.info(
             f"[vstore] persist_dir={self.persist_dir} "
             f"collection={self.collection_name} "
@@ -106,6 +111,82 @@ class ShaderVectorStore:
     def count(self) -> int:
         return self._collection.count()
 
+    # ---------- 子块级索引（父子分块） ----------
+    def _chunk_collection(self):
+        """惰性获取/创建子块集合（与主集合分开，互不污染 Top-K）。"""
+        if getattr(self, "_chunk_coll", None) is None:
+            self._chunk_coll = self._client.get_or_create_collection(
+                name=f"{self.collection_name}_chunks",
+                metadata={"hnsw:space": self.distance},
+            )
+        return self._chunk_coll
+
+    def upsert_chunks(self, records: list[ShaderRecord]) -> int:
+        """把每条 shader 切成父子子块并写入子块集合。返回写入子块数。"""
+        if not records:
+            return 0
+        coll = self._chunk_collection()
+        all_chunks: list[ShaderChunk] = []
+        for r in records:
+            all_chunks.extend(chunk_shader(r))
+        if not all_chunks:
+            return 0
+        ids = [c.chunk_id for c in all_chunks]
+        docs = [c.text for c in all_chunks]
+        metas = [
+            {
+                "parent_id": c.parent_id,
+                "kind": c.kind,
+                "title": c.title,
+                **{k: v for k, v in c.meta.items() if isinstance(v, (str, int, float, bool))},
+            }
+            for c in all_chunks
+        ]
+        embs: np.ndarray = self.embedder.embed(docs)
+        coll.upsert(ids=ids, embeddings=embs.tolist(), documents=docs, metadatas=metas)
+        logger.info(
+            f"[vstore] upserted {len(all_chunks)} chunks from {len(records)} shaders; "
+            f"chunk total={coll.count()}"
+        )
+        return len(all_chunks)
+
+    def query_chunks(
+        self,
+        text: str,
+        top_k: int = 20,
+        where: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """子块级检索。返回 [{chunk_id, parent_id, kind, title, distance, document}]。"""
+        coll = self._chunk_collection()
+        if coll.count() == 0:
+            return []
+        q_emb = self.embedder.embed([text])
+        res = coll.query(query_embeddings=q_emb.tolist(), n_results=top_k, where=where or None)
+        out: list[dict[str, Any]] = []
+        ids = (res.get("ids") or [[]])[0]
+        distances = (res.get("distances") or [[]])[0]
+        metadatas = (res.get("metadatas") or [[]])[0]
+        documents = (res.get("documents") or [[]])[0]
+        for i, cid in enumerate(ids):
+            md = metadatas[i] if i < len(metadatas) else {}
+            out.append(
+                {
+                    "chunk_id": cid,
+                    "parent_id": md.get("parent_id", ""),
+                    "kind": md.get("kind", ""),
+                    "title": md.get("title", ""),
+                    "distance": float(distances[i]) if i < len(distances) else None,
+                    "document": documents[i] if i < len(documents) else "",
+                }
+            )
+        return out
+
+    def chunk_count(self) -> int:
+        try:
+            return self._chunk_collection().count()
+        except Exception:
+            return 0
+
     def reset(self) -> None:
         """清空当前 collection（保留持久化目录）。"""
         self._client.delete_collection(self.collection_name)
@@ -113,4 +194,10 @@ class ShaderVectorStore:
             name=self.collection_name,
             metadata={"hnsw:space": self.distance},
         )
+        # 子块集合一并清空
+        try:
+            self._client.delete_collection(f"{self.collection_name}_chunks")
+        except Exception:
+            pass
+        self._chunk_coll = None
         logger.info(f"[vstore] collection '{self.collection_name}' reset")

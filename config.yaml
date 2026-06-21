@@ -35,7 +35,7 @@ paths:
   vector_db_dir: "data/vector_db"
   models_dir: "data/models"
 
-# === 阶段二新增：知识库构建 ===
+# === 知识库构建 ===
 corpus:
   # Shadertoy API 拉取
   shadertoy_api_base: "https://www.shadertoy.com/api/v1"
@@ -58,19 +58,19 @@ corpus:
   per_query_limit: 60
   # 请求间隔（秒），避免触发限流
   request_interval_seconds: 0.4
-  # 是否启用 LLM 复核打标（默认 false，靠规则；阶段三按需开启）
+  # 是否启用 LLM 复核打标（默认 false，靠规则；按需开启）
   enable_llm_tagging: false
   # 单 shader 代码长度过滤
   min_code_chars: 200
   max_code_chars: 12000
 
-# === 阶段二新增：嵌入模型 ===
+# === 嵌入模型 ===
 embedding:
   # 默认 bge-m3：1024 维，跨语言（中文 query + 英文代码注释）
   # 备选：BAAI/bge-base-en-v1.5（768 维，英文，更小约 440MB）
   model_name: "BAAI/bge-m3"
   # 设备：cpu / cuda / mps（mac）/ auto
-  device: "auto"
+  device: "cuda"
   # 归一化嵌入向量（cosine 检索时建议 True）
   normalize_embeddings: true
   # 批量编码大小
@@ -78,9 +78,24 @@ embedding:
   # 模型本地缓存目录（None 则使用 HF 默认 ~/.cache/huggingface）
   cache_dir: "data/models"
 
-# === 阶段二新增：向量库 ===
+# === 向量库 ===
 vector_store:
   # ChromaDB 集合名
   collection_name: "shadertoy_shaders"
   # 距离度量
   distance: "cosine"
+
+# === 混合检索：向量 + BM25 + 标签/质量过滤 + 重排 ===
+retrieval:
+  # 向量与关键词各自的召回上限
+  recall_k: 20
+  # 融合权重（向量 / BM25 / 标签匹配 / 质量分）
+  w_vector: 0.50
+  w_bm25: 0.25
+  w_tag: 0.15
+  w_quality: 0.10
+  # 融合分阈值：低于此值不返回参考，宁缺毋滥
+  min_score: 0.15
+  # 是否启用交叉编码器重排（无依赖/无显存时自动降级为启发式排序）
+  use_rerank: true
+  reranker_model: "BAAI/bge-reranker-v2-m3"

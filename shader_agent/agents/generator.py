@@ -7,7 +7,7 @@
     → draft_code
     → validate_code
     → 若失败且 iterations < max_fix_loops，回到 draft_code(prev_code+errors)
-    → self_critique     (阶段五新增；enable_self_critique=False 时跳过)
+    → self_critique     (enable_self_critique=False 时跳过)
     → 输出 Message{payload=GeneratedShader}
 """
 from __future__ import annotations
@@ -51,19 +51,21 @@ class ShaderGenerator(Role):
         self,
         *,
         vector_store: Any = None,
+        retriever: Any = None,
         llm_fn: Callable[[list[dict[str, str]]], str] | None = None,
         compiler: Any = None,
-        # 阶段五：可选的多模态自评
+        # 可选的多模态自评
         critique_fn: Callable | None = None,
         # 纯文本自评（无多模态也能用；分析编译错误）
         text_critique_fn: Callable | None = None,
-        renderer: Any = None,               # 阶段六注入；约定 .render(code) -> bytes(PNG)
+        renderer: Any = None,               # 约定 .render(code) -> bytes(PNG)
         enable_self_critique: bool = False,
         model_name: str = "",
         max_fix_loops: int = 2,
         top_k: int = 3,
     ) -> None:
         self._vector_store = vector_store
+        self._retriever = retriever
         self._llm_fn = llm_fn
         self._compiler = compiler
         self._critique_fn = critique_fn
@@ -77,7 +79,10 @@ class ShaderGenerator(Role):
 
     def _setup_actions(self) -> None:
         self.register_action(ParseSpecAction())
-        self.register_action(RetrieveExamplesAction(vector_store=self._vector_store))
+        self.register_action(RetrieveExamplesAction(
+            vector_store=self._vector_store,
+            retriever=self._retriever,
+        ))
         self.register_action(DraftCodeAction(llm_fn=self._llm_fn))
         self.register_action(ValidateCodeAction(compiler=self._compiler))
         self.register_action(SelfCritiqueAction(
@@ -103,7 +108,7 @@ class ShaderGenerator(Role):
 
         # retrieve examples
         examples: list[SimilarShader] = []
-        if self._vector_store is not None:
+        if self._vector_store is not None or self._retriever is not None:
             r2 = self.run_action(
                 "retrieve_examples",
                 RetrieveExamplesIn(spec=spec, top_k=self._top_k),
@@ -163,7 +168,7 @@ class ShaderGenerator(Role):
         if design_explain:
             final_explain = design_explain
 
-        # 阶段五：自评（可选）
+        # 自评（可选）
         critique_score = 0.0
         critique_rationale = ""
         if self._enable_self_critique and final_code:

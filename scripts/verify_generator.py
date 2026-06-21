@@ -1,4 +1,4 @@
-"""阶段五 Generator 端到端验证（真调 DeepSeek）。
+"""Generator 端到端验证（真调 DeepSeek）。
 
 用法：
     python -m scripts.verify_generator
@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
                    help="跑 analyze_then_generate 组合任务（先解读 seed03 再改写）")
     p.add_argument("--max-fix-loops", type=int, default=2)
     p.add_argument("--top-k", type=int, default=3)
-    # 阶段六新增
+    # headless 渲染
     p.add_argument("--render", action="store_true",
                    help="启用真 GL 编译器（ValidateCodeAction 走真 compiler）")
     p.add_argument("--vision-critique", action="store_true",
@@ -118,7 +118,7 @@ def main() -> int:
     chat_fn = make_chat_fn(use_cache=use_cache)
     json_fn = make_json_fn(use_cache=use_cache)
 
-    # 阶段六：根据 flag 决定是否启用真渲染
+    # 根据 flag 决定是否启用真渲染
     enable_render = args.render or args.vision_critique
     enable_critique = args.critique or args.vision_critique
     compiler = None
@@ -130,7 +130,7 @@ def main() -> int:
         compiler, reason = GLSLCompiler.try_create()
         if compiler is None:
             console.print(f"[yellow]  compiler 不可用: {reason.splitlines()[0]}[/yellow]")
-            console.print("[yellow]  → 回退到静态 validate（阶段五能力）[/yellow]")
+            console.print("[yellow]  → 回退到静态 validate[/yellow]")
         else:
             console.print("  compiler      = real GL (moderngl)")
         renderer, rreason = GLSLRenderer.try_create()
@@ -148,9 +148,9 @@ def main() -> int:
     generator = ShaderGenerator(
         vector_store=vstore,
         llm_fn=code_fn,
-        compiler=compiler,                    # 阶段六：可注入真编译器
-        renderer=renderer,                     # 阶段六：可注入真渲染器
-        critique_fn=critique_fn,               # 阶段六：可注入多模态自评
+        compiler=compiler,                    # 可注入真编译器
+        renderer=renderer,                     # 可注入真渲染器
+        critique_fn=critique_fn,               # 可注入多模态自评
         enable_self_critique=enable_critique,
         model_name=settings.llm.coder_model,
         max_fix_loops=args.max_fix_loops,
@@ -231,7 +231,7 @@ def main() -> int:
     out_path = out_dir / f"generator_{_slugify(args.case)}_{ts}.md"
     png_path = None
 
-    # 阶段六：如果 renderer 可用，单独再 render 一次落盘 PNG
+    # 如果 renderer 可用，单独再 render 一次落盘 PNG
     if args.save_png and renderer is not None and gen.compile_result.ok:
         try:
             png_bytes = renderer.render(gen.code, width=512, height=384, time=1.5)

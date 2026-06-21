@@ -1,4 +1,4 @@
-"""阶段五单测：Generator 强化（修正 prompt 分支 / 强 validate / 自评 / Role 编排）。
+"""单测：Generator（修正 prompt 分支 / validate / 自评 / Role 编排）。
 
 不调真 LLM，全部用 stub。
 """

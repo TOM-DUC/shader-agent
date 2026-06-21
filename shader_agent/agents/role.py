@@ -5,8 +5,8 @@
   - 主入口 handle(message) → 决定走哪个 Action 序列 → 返回新 Message；
   - 通过 register_action() 在 __init__ 里组装 Action。
 
-阶段三：Role 的 handle() 由子类决定调用顺序。
-阶段六（如需）：可以加 ReAct/Plan-Act 风格的动态选择，但目前固定流水线足够。
+Role 的 handle() 由子类决定调用顺序。
+（如需）：可以加 ReAct/Plan-Act 风格的动态选择，但目前固定流水线足够。
 """
 from __future__ import annotations
 

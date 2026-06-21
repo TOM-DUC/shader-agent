@@ -1,4 +1,4 @@
-"""阶段三离线单测：覆盖 schemas / memory / actions / role / orchestrator。
+"""离线单测：覆盖 schemas / memory / actions / role / orchestrator。
 
 约束：
   - 不调真 LLM；

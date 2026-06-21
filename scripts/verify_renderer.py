@@ -1,4 +1,4 @@
-"""阶段六：独立验证 headless GLSL 渲染器（不依赖 DeepSeek）。
+"""独立验证 headless GLSL 渲染器（不依赖 DeepSeek）。
 
 用法：
     python -m scripts.verify_renderer

@@ -3,7 +3,7 @@
 设计原则：
 - 任何跨 Role 的产物都用这里的 pydantic 模型表示，不传裸 dict 或 markdown；
 - Analyzer 的 AnalysisReport 直接可被 Generator 的"先分析后改写"流程消费；
-- 字段命名保守，留好 reserved 字段，避免阶段四扩展时频繁改协议。
+- 字段命名保守，留好 reserved 字段，避免扩展时频繁改协议。
 """
 from __future__ import annotations
 
@@ -53,16 +53,15 @@ class Message(BaseModel):
 # =====================================================================
 
 class SimilarShader(BaseModel):
-    """检索到的相似 shader 的轻量引用。
-
-    完整代码可通过 shader_id 在 data/shadertoy_corpus/clean/{id}.json 获取，
-    这里只放检索决策需要的最少字段。
-    """
+    """检索到的相似 shader 的轻量引用。"""
     shader_id: str
     name: str = ""
     distance: float = 0.0
     tags_topic: list[str] = Field(default_factory=list)
-    code_excerpt: str = ""  # 代码前若干字符，便于 prompt 拼接
+    code_excerpt: str = ""           # 向后兼容旧 UI/旧向量库
+    algorithm_summary: str = ""       # 算法摘要，给 Generator 用
+    matched_chunks: list[str] = Field(default_factory=list)   # 命中的子块标题列表
+    reference_context: str = ""       # 结构化参考上下文（Generator prompt 用）
 
 
 # =====================================================================
@@ -94,7 +93,7 @@ class AnalysisReport(BaseModel):
     section_walkthrough: dict[str, str] = Field(default_factory=dict)
     # 追踪
     created_at: float = Field(default_factory=time.time)
-    model_used: str = ""  # 调用了哪个 LLM 模型（阶段四填充）
+    model_used: str = ""  # 调用了哪个 LLM 模型（填充）
 
     PAYLOAD_TYPE: ClassVar[str] = "AnalysisReport"
 
@@ -223,7 +222,7 @@ class GenerationSpec(BaseModel):
 # =====================================================================
 
 class CompileResult(BaseModel):
-    """GLSL 编译验证结果（阶段六真正实现，阶段三只占位）。"""
+    """GLSL 编译验证结果。"""
     ok: bool = False
     errors: str = ""  # 编译器原文错误
     warnings: str = ""
@@ -241,7 +240,7 @@ class GeneratedShader(BaseModel):
     compile_result: CompileResult = Field(default_factory=CompileResult)
     iterations: int = 0                 # 修正循环跑了几轮
     references_used: list[SimilarShader] = Field(default_factory=list)
-    # 阶段五新增：自评结果（启用时填充，未启用时 score=0.0）
+    # 自评结果（启用时填充，未启用时 score=0.0）
     self_critique_score: float = 0.0
     self_critique_rationale: str = ""
     # 追踪

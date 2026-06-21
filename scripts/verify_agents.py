@@ -1,4 +1,4 @@
-"""阶段三验收脚本（dry-run，不真调 LLM 也不真编译）。
+"""验收脚本（dry-run，不真调 LLM 也不真编译）。
 
 跑通：
   1) 仅 Analyzer：用 seed03 (Raymarched Sphere) 走完 parse → retrieve → explain(fallback) → synthesize
@@ -102,7 +102,7 @@ def main() -> int:
     console.print(Panel.fit("[bold green]ALL 3 TASKS PASS (dry-run)[/bold green]",
                             border_style="green"))
     console.print(
-        "[dim]说明：本验证使用 fallback / stub，未真调 LLM；阶段四、五接入 DeepSeek 后会有质量提升。[/dim]"
+        "[dim]说明：本验证使用 fallback / stub，未真调 LLM；接入 DeepSeek 后会有质量提升。[/dim]"
     )
     return 0
 

@@ -1,4 +1,4 @@
-"""阶段七：Gradio 三标签页 UI。
+"""Gradio 三标签页 UI。
 
 对外仅暴露 `launch()` 函数，由 `scripts/run_ui.py` 调用。
 """

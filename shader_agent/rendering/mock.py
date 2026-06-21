@@ -1,11 +1,11 @@
 """Mock 编译器 / 渲染器：单测与无 GL 环境演示。
 
 行为：
-- MockCompiler.compile(): 用规则检查（与阶段五的 ValidateCodeAction 类似，
+- MockCompiler.compile(): 用规则检查（与的 ValidateCodeAction 类似，
   但更严格地模拟"真编译器"，例如检测 undeclared identifier）
 - MockRenderer.render(): 返回固定 1x1 PNG，足以让 self_critique 走通
 
-这两个类的目的是让阶段六的所有测试可以在 CI / 容器 / 离线环境跑通，
+这两个类的目的是让的所有测试可以在 CI / 容器 / 离线环境跑通，
 不依赖真 OpenGL。
 """
 from __future__ import annotations
@@ -43,7 +43,7 @@ class MockCompiler:
 
 
 class MockRenderer:
-    """返回 1x1 RGBA PNG，避免阶段六测试依赖真 GL。"""
+    """返回 1x1 RGBA PNG，避免测试依赖真 GL。"""
 
     # 1x1 红色像素的 PNG（手工构造，89 字节）
     RED_PIXEL_PNG = bytes.fromhex(

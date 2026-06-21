@@ -1,6 +1,6 @@
 """GLSLRenderer：编译 + 全屏 quad 渲染 + 读回 PNG。
 
-阶段六的核心新能力。配合多模态 LLM 实现 GeneratedShader 的"渲染截图自评"。
+的核心新能力。配合多模态 LLM 实现 GeneratedShader 的"渲染截图自评"。
 """
 from __future__ import annotations
 

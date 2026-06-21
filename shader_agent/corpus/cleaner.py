@@ -24,7 +24,7 @@ _EXTERNAL_CTYPES = {
     "music", "musicstream", "mic", "keyboard", "buffer",
 }
 
-# 阶段二补齐：可信来源（豁免 min_likes / 长度过滤；仍走外部资源与去重检查）
+# 可信来源（豁免 min_likes / 长度过滤；仍走外部资源与去重检查）
 # - seed: 内嵌种子
 # - local: 用户从 data/external_shaders/ 主动导入
 _TRUSTED_SOURCES = {"seed", "local"}

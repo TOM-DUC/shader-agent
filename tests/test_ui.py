@@ -1,4 +1,4 @@
-"""阶段七 UI runners 离线单测。
+"""UI runners 离线单测。
 
 不启动 Gradio 进程；只验证：
   1) AssemblyOptions cache_key 唯一性；

@@ -1,4 +1,4 @@
-"""Agent 子模块（阶段三）。
+"""Agent 子模块。
 
 包含：
   - schemas    : 角色间共享的数据契约（Message / AnalysisReport / GenerationSpec ...）

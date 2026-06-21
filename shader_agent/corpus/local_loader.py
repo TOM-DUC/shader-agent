@@ -1,4 +1,4 @@
-"""阶段二补齐：从本地目录批量导入 GLSL 文件作为 ShaderRecord。
+"""从本地目录批量导入 GLSL 文件作为 ShaderRecord。
 
 用途：
 1. 用户没有 Shadertoy API key、抓取又不稳定时，可以手工去

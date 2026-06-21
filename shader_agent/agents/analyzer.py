@@ -1,14 +1,13 @@
 """ShaderAnalyzer 角色。
 
 两种策略（由 strategy 参数选择）：
-  - "single"     : 阶段三的单 ExplainShaderAction（向后兼容）
-  - "fourstage"  : 阶段四的四段式（walkthrough → summary → effect → compare）
-                   默认策略。
+  - "single"     : 单 ExplainShaderAction，一次 LLM 调用产出讲解
+  - "fourstage"  : 四段式（walkthrough → summary → effect → compare），默认策略
 
 公共流水线：
   observe(message with code)
     → parse_shader            (静态)
-    → retrieve_similar        (向量检索，若有 vector_store)
+    → retrieve_similar        (混合检索 / 向量检索)
     → [strategy 分支]
     → synthesize_report
     → 输出 Message{payload=AnalysisReport}
@@ -62,8 +61,9 @@ class ShaderAnalyzer(Role):
         self,
         *,
         vector_store: Any = None,
+        retriever: Any = None,
         llm_fn: Callable[[list[dict[str, str]]], str] | None = None,
-        # 阶段四：允许为 4 段单独指定 llm_fn（例如让 summary 用 reasoner，
+        # 允许为 4 段单独指定 llm_fn（例如让 summary 用 reasoner，
         # walkthrough 用 chat）。任一为 None 则回退到 llm_fn
         walkthrough_llm: Callable | None = None,
         summary_llm: Callable | None = None,
@@ -75,6 +75,7 @@ class ShaderAnalyzer(Role):
         parallel: bool = True,
     ) -> None:
         self._vector_store = vector_store
+        self._retriever = retriever
         self._llm_fn = llm_fn
         self._walkthrough_llm = walkthrough_llm or llm_fn
         self._summary_llm = summary_llm or llm_fn
@@ -83,16 +84,19 @@ class ShaderAnalyzer(Role):
         self._model_name = model_name
         self._top_k = top_k
         self._strategy = strategy
-        # 阶段四加速：把四段中相互独立的环节并行化（见 _run_fourstage）。
+        # 把四段中相互独立的环节并行化（见 _run_fourstage）。
         self._parallel = parallel
         super().__init__()
 
     def _setup_actions(self) -> None:
         self.register_action(ParseShaderAction())
-        self.register_action(RetrieveSimilarAction(vector_store=self._vector_store))
-        # 阶段三的单 explain（保留以便策略 single）
+        self.register_action(RetrieveSimilarAction(
+            vector_store=self._vector_store,
+            retriever=self._retriever,
+        ))
+        # 单 explain（策略 single 使用）
         self.register_action(ExplainShaderAction(llm_fn=self._llm_fn))
-        # 阶段四的四段式
+        # 四段式
         self.register_action(WalkthroughAction(llm_fn=self._walkthrough_llm))
         self.register_action(SummaryAction(llm_fn=self._summary_llm))
         self.register_action(EffectInferAction(llm_fn=self._effect_llm))
@@ -116,10 +120,12 @@ class ShaderAnalyzer(Role):
 
         # 2. retrieve
         similar: list[SimilarShader] = []
-        if self._vector_store is not None:
+        if self._vector_store is not None or self._retriever is not None:
+            # 用静态解析出的函数名/内置变量做标签线索，提升标签匹配度
+            want_tags = self._infer_tags(parse_out)
             r2 = self.run_action(
                 "retrieve_similar",
-                RetrieveSimilarIn(code=code, top_k=self._top_k),
+                RetrieveSimilarIn(code=code, top_k=self._top_k, want_tags=want_tags),
             )
             if r2.ok and r2.data is not None:
                 similar = list(r2.data.items)
@@ -145,7 +151,7 @@ class ShaderAnalyzer(Role):
             source_code=code, algorithm_summary="(synthesize failed)"
         )
 
-        # 阶段四：把 comparison 挂到 section_walkthrough 的特殊键
+        # 把 comparison 挂到 section_walkthrough 的特殊键
         if comparison:
             report.section_walkthrough = dict(report.section_walkthrough or {})
             report.section_walkthrough["对照参考样本"] = comparison
@@ -302,6 +308,23 @@ class ShaderAnalyzer(Role):
         return explain, comparison
 
     # ---------- 工具 ----------
+    @staticmethod
+    def _infer_tags(parse_out: ParseShaderOut) -> list[str]:
+        """从静态解析结果粗推技术标签，作为检索时的标签匹配线索。"""
+        funcs = " ".join(parse_out.custom_functions).lower()
+        tags: list[str] = []
+        if "march" in funcs or "raymarch" in funcs:
+            tags.append("raymarching")
+        if any(f.lower().startswith("sd") for f in parse_out.custom_functions):
+            tags.append("sdf")
+        if "noise" in funcs or "fbm" in funcs or "hash" in funcs:
+            tags.append("noise")
+        if "normal" in funcs or "light" in funcs:
+            tags.append("lighting")
+        if "iTime" in parse_out.used_builtins:
+            tags.append("animation")
+        return tags
+
     @staticmethod
     def _extract_code(message: Message) -> str:
         if isinstance(message.payload, dict):

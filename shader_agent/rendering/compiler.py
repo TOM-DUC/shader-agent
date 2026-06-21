@@ -1,6 +1,6 @@
 """GLSLCompiler：只编译，不渲染。
 
-为什么单独做？阶段五的 Generator 修正循环每轮都要 validate，
+为什么单独做？的 Generator 修正循环每轮都要 validate，
 但渲染（fbo + readback）相对昂贵。只编译的话单次约 5-30ms。
 """
 from __future__ import annotations

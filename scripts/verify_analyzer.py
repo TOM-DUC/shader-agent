@@ -1,4 +1,4 @@
-"""阶段四 Analyzer 端到端验证（真调 DeepSeek）。
+"""Analyzer 端到端验证（真调 DeepSeek）。
 
 用法：
     python -m scripts.verify_analyzer                 # 用 seed03 Raymarched Sphere
