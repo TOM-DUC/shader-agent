@@ -1,30 +1,25 @@
 # Shader Agent
 
-基于 DeepSeek 大模型的 Shadertoy 智能助手。它能解读现成的 GLSL 片元着色器、按自然语言需求生成新的着色器、在现有代码基础上做最小化改写，并通过一套混合检索知识库与持久化记忆系统，让生成质量随使用不断提升。
+<p>
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+  <img src="https://img.shields.io/badge/status-beta-yellow" alt="Status: Beta">
+  <img src="https://img.shields.io/badge/LLM-DeepSeek-red" alt="LLM: DeepSeek">
+</p>
 
-本项目面向求职作品展示，强调的是工程化的检索增强生成（RAG）与记忆系统设计，而非堆砌重型框架。整个系统保持轻量，没有引入 Neo4j、Elasticsearch、Celery 或外部 Agent 框架，所有能力都建立在可控、可解释、可降级的组件之上。
+基于 DeepSeek 大模型的 Shadertoy 智能助手。它能解读现成的 GLSL 片元着色器、按自然语言需求生成新的着色器、在现有代码基础上做最小化改写，并通过混合检索知识库（向量 + BM25 + 重排 + 融合）与工作记忆，让生成质量随使用不断提升。
 
-## 截图占位
+本项目强调的是工程化的检索增强生成（RAG）系统设计，而非堆砌重型框架。整个系统保持轻量，没有引入 Neo4j、Elasticsearch、Celery 或外部 Agent 框架，所有能力都建立在可控、可解释、可降级的组件之上。
 
-应用主界面与三个工作标签页：
+## 截图
 
-![主界面](docs/screenshots/overview.png)
+> 🖼️ 截图待补充 — 运行 `python -m scripts.run_ui` 后即可在浏览器中看到界面。
 
-Analyzer 解读现成着色器并展示分段讲解与对照参考样本：
-
-![Analyzer](docs/screenshots/analyzer.png)
-
-Generator 按需求生成新着色器，并展示使用到的检索参考与用户反馈入口：
-
-![Generator](docs/screenshots/generator.png)
-
-Remixer 基于原代码改写，支持改写链与采用反馈：
-
-![Remixer](docs/screenshots/remixer.png)
-
-混合检索建库时的质量分布与冒烟检索结果：
-
-![建库](docs/screenshots/build_corpus.png)
+| 标签页 | 功能 |
+|--------|------|
+| **Analyzer** | 解读现成着色器，展示分段讲解与对照参考样本 |
+| **Generator** | 按需求生成新着色器，展示检索参考与用户反馈入口 |
+| **Remixer** | 基于原代码改写，支持改写链与采用反馈 |
 
 ## 核心特性
 
@@ -36,15 +31,11 @@ Remixer 基于原代码改写，支持改写链与采用反馈：
 
 混合检索知识库。把每个着色器拆成父子知识块，子块用于细粒度检索，命中后回溯完整着色器。检索同时走向量召回与 BM25 关键词召回，再叠加标签匹配度与质量分做融合排序，可选交叉编码器精排，最后用相关度阈值过滤，宁缺毋滥。
 
-持久化记忆。情节记忆忠实记录每次任务发生了什么，经验记忆从经过验证的成功情节中提炼可复用规则。只有通过真实编译、达到渲染评分阈值或被用户明确采用的情节，才允许沉淀为经验，从而避免把失败代码与错误结论不断带入后续生成。
-
 ## 架构总览
 
-数据侧的知识库构建流程：外部着色器数据经过清洗、静态分析与质量验证，切分成父子知识块，分别写入向量库、BM25 关键词索引与父文档存储。检索时三路结果融合排序，产出可信的参考内容。
+数据侧的知识库构建流程：外部着色器数据经过清洗、静态分析与质量验证，切分成父子知识块，分别写入向量库、BM25 关键词索引与父文档存储。检索时三路（向量 + BM25 + 标签/质量融合）结果排序，产出可信的参考内容。
 
-运行侧的任务流程：用户任务由 Analyzer、Generator、Remixer、Validator 协作完成，经过编译与渲染验证后写入情节记忆。用户对结果采用、撤销或继续修改，被采用且验证通过的成功案例归纳进经验记忆。新任务到来时，系统分别检索知识库、情节记忆与经验记忆，按任务类型注入有限且相关的上下文。
-
-知识库回答的是其他优秀着色器是怎么实现的，情节记忆回答的是之前执行过哪些任务、结果如何，经验记忆回答的是哪些方法已被验证有效、遇到类似问题该怎么处理。三者职责分明，使用独立的存储集合，互不挤占同一份检索名额。
+运行侧的任务流程：用户任务由 Analyzer、Generator、Remixer 协作完成，经过编译与渲染验证。系统检索知识库获取相关参考样本，注入 LLM 上下文辅助生成与解读。
 
 ## 目录结构
 
@@ -54,8 +45,7 @@ shader_agent/
   llm/           DeepSeek 客户端与 llm_fn 装配
   corpus/        知识库：模型、清洗、打标、静态分析、分块、向量库、关键词库、父文档库、混合检索、重排
   embeddings/    本地嵌入模型封装
-  memory/        持久化记忆：情节与经验的模型、存储、提炼、召回、服务门面
-  agents/        Role、Action、工作记忆、Analyzer、Generator、Orchestrator
+  agents/        Role、Action、工作记忆（WorkingMemory）、Analyzer、Generator、Orchestrator
   rendering/     headless GLSL 编译与渲染
   ui/            Gradio 三标签页界面与运行装配
   utils/         日志等工具
@@ -83,7 +73,9 @@ Linux 或 macOS 下用 source .venv/bin/activate 激活环境。
 cp .env.example .env
 ```
 
-编辑 .env，填入真实的 DEEPSEEK_API_KEY。如果有 Shadertoy API key，可一并填入 SHADERTOY_API_KEY，没有也能用内置的种子着色器跑通全流程。
+编辑 .env，填入真实的 `DEEPSEEK_API_KEY`。如果有 Shadertoy API key，可一并填入 `SHADERTOY_API_KEY`，没有也能用内置的种子着色器跑通全流程。
+
+> ⚠️ `.env` 文件包含敏感密钥，已默认被 `.gitignore` 排除，**切勿**提交到版本库。
 
 下载本地嵌入模型（首次较慢，模型约 2GB）：
 
@@ -134,6 +126,18 @@ pytest
 
 为什么不用更重的组件。语料规模不大，关系不复杂，单机 SQLite 加 Chroma 加内存 BM25 已足够，引入图数据库或搜索引擎只会增加部署与维护成本。
 
-为什么检索做成可降级。求职展示场景往往没有 GPU，交叉编码器与大嵌入模型未必跑得起来。混合检索器在子块库、关键词索引或父文档表任一缺失时，会自动退回到着色器级向量检索，保证基本可用。
+为什么检索做成可降级。没有 GPU的情况，交叉编码器与大嵌入模型未必跑得起来。混合检索器在子块库、关键词索引或父文档表任一缺失时，会自动退回到着色器级向量检索，保证基本可用。
 
-为什么记忆与知识库分离。知识库保存可参考的外部技术内容，情节记忆保存发生过的任务，经验记忆保存经过验证的方法。三者混在一起会让普通示例挤掉更重要的修复经验，分库检索才能各司其职。
+为什么用父子分块而非整段向量化。每条 shader 拆成 overview / structure / algorithm / 函数级子块，检索"如何求法线"时命中具体函数块而非整段平均语义，精度更高。子块命中后通过父文档表回溯完整代码，兼顾粒度与完整性。
+
+## 贡献
+
+欢迎贡献！无论是 Bug 报告、功能建议还是代码提交，请先开 issue 讨论，再提交 PR。
+
+- 代码风格：遵循项目现有风格，保持轻量可读
+- 测试：新增功能应包含对应测试
+- 提交信息：使用 `feat:` / `fix:` / `refactor:` / `docs:` 前缀
+
+## 许可
+
+本项目基于 [MIT License](LICENSE) 开源。

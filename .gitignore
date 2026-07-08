@@ -1,36 +1,100 @@
+# ===========================
 # Python
+# ===========================
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.egg
 *.egg-info/
 .venv/
 .pytest_cache/
-*.pyc
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.hypothesis/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# 环境与密钥
+# ===========================
+# 环境与密钥（绝不提交）
+# ===========================
 .env
 .env.local
+.env.*.local
 
+# ===========================
+# 构建产物
+# ===========================
+dist/
+build/
+*.manifest
+*.spec
+
+# ===========================
 # 数据和产物（大文件，可脚本重建）
+# ===========================
 data/
 logs/
 
-# ChromaDB
+# ===========================
+# ChromaDB / SQLite 数据库
+# ===========================
 *.sqlite
 *.sqlite3
 *.db
+*.db-journal
+*.db-wal
 
-# IDE
+# ===========================
+# 测试覆盖率
+# ===========================
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+coverage.xml
+*.cover
+
+# ===========================
+# IDE / 编辑器
+# ===========================
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 .DS_Store
+Thumbs.db
 
+# ===========================
 # 参考项目（仅阅读，不纳入版本）
+# ===========================
 desktop-shadertoy/
 gpt-researcher/
 MetaGPT/
 
-# 历史计划文件
+# ===========================
+# 历史计划 / 文档构建产物
+# ===========================
 plan/
+docs/_build/
+docs/build/
 
+# ===========================
 # 工作区工具元数据
+# ===========================
 .sisyphus/
+.cache/
+
+# ===========================
+# Python 版本 / 环境
+# ===========================
+.python-version
+instance/
+
+# ===========================
+# Jupyter Notebook 中间产物
+# ===========================
+.ipynb_checkpoints/
