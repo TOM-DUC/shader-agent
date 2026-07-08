@@ -435,21 +435,69 @@ def build_app() -> "gr.Blocks":
     return app
 
 
+_WARMUP_STARTED = False
+_WARMUP_LOCK = __import__("threading").Lock()
+
+
 def _warmup_background() -> None:
-    """后台预热：提前加载嵌入模型 + 建好 GL context，避免首次请求被冷启动拖慢。"""
+    """后台一次性预热：嵌入模型 → 重排器（仅当启用）→ GL context。
+
+    要点：
+    - 与请求路径共用同一批进程级单例（get_embedder / get_reranker），
+      预热完成后首个真实请求直接命中已加载实例，不再二次加载。
+    - 串行预热：两个模型各约 2GB，6GB 显存难以同时容纳，先 embedder 后
+      reranker，避免 CUDA OOM 把模型悄悄降级到 CPU。
+    - 防重入：多次调用 launch / 热重载也只热一次。
+    - 每个阶段单独计时并打日志，便于直接从日志看出耗时分布。
+    """
+    global _WARMUP_STARTED
+    with _WARMUP_LOCK:
+        if _WARMUP_STARTED:
+            return
+        _WARMUP_STARTED = True
+
     import threading
+    import time
 
     def _job():
+        from shader_agent.config.settings import settings
+        from shader_agent.utils.logger import logger
+
+        # 1) 预热 embedder（始终需要：查询向量化）
         try:
+            t0 = time.perf_counter()
             from shader_agent.embeddings.bge_embedder import get_embedder
-            get_embedder().embed_one("warmup: a shader that draws a red circle")
-        except Exception:
-            pass
+            get_embedder().embed_one("warmup")
+            logger.info(f"[warmup] embedder ready in {time.perf_counter() - t0:.1f}s")
+        except Exception as e:
+            logger.warning(f"[warmup] embedder skipped: {e}")
+
+        # 2) 预热 reranker（仅当 config.yaml retrieval.use_rerank=true 时）
+        if settings.retrieval.use_rerank:
+            try:
+                t0 = time.perf_counter()
+                from shader_agent.corpus.reranker import get_reranker
+                r = get_reranker(
+                    model_name=settings.retrieval.reranker_model,
+                    enabled=True,
+                )
+                r.rerank("warmup", [{"text": "warmup", "fused_score": 0.0}])
+                logger.info(f"[warmup] reranker ready in {time.perf_counter() - t0:.1f}s")
+            except Exception as e:
+                logger.warning(f"[warmup] reranker skipped: {e}")
+        else:
+            logger.info("[warmup] reranker disabled (retrieval.use_rerank=false)")
+
+        # 3) 预热 GLSL 编译器（GL context 首次创建较慢）
         try:
+            t0 = time.perf_counter()
             from shader_agent.rendering import GLSLCompiler
             GLSLCompiler.try_create()
-        except Exception:
-            pass
+            logger.info(f"[warmup] GL compiler ready in {time.perf_counter() - t0:.1f}s")
+        except Exception as e:
+            logger.warning(f"[warmup] GL compiler skipped: {e}")
+
+        logger.info("[warmup] all background warmup done")
 
     threading.Thread(target=_job, name="warmup", daemon=True).start()
 
@@ -460,7 +508,7 @@ def launch(*, server_name: str = "127.0.0.1", server_port: int = 7860,
     app = build_app()
     if warmup:
         _warmup_background()
-    app.queue(max_size=16).launch(
+    app.queue(max_size=16, default_concurrency_limit=1).launch(
         server_name=server_name, server_port=server_port,
         share=share, inbrowser=inbrowser, **launch_kwargs)
 

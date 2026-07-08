@@ -1,19 +1,21 @@
-"""主题打标。
+"""主题打标（v2）。
 
-输出维度（多标签，可同时挂多个）：
-  - raymarching
-  - sdf
-  - noise
-  - fractal
-  - post-processing
-  - 2d-pattern
-  - lighting
-  - animation
+输出维度（多标签，可同时挂多个）—— 21 类受控词表：
+
+旧 8 类：raymarching / sdf / noise / fractal / post-processing / 2d-pattern / lighting / animation
+新增 12 类：color-grading / glitch / distortion / blur / transition / stylize / kaleidoscope / tiling / feedback / geometry / masking / audio-reactive
+兜底：uncategorized
+
+打标顺序（强→弱）：
+1. ISF/s21k 外部分类映射（由 `isf_categories_to_tags` 在 load 阶段通过 categories 传入）；
+2. 代码关键词正则；
+3. ``2d-pattern`` 仅在有正向 2D 信号时打（不再用排除法兜底）；
+4. 全空则落 ``uncategorized``。
 
 设计：
 - 规则版（默认）：基于关键词正则 + 启发式，覆盖 80%+ 案例，毫秒级；
 - LLM 复核版（可选，settings.corpus.enable_llm_tagging=True）：
-  对规则未能命中任何主题的样本，让 deepseek-chat 强制从受控词表里选 1~3 个。
+   对规则结果为空且 categories 也为空的样本，让 deepseek-chat 从受控词表选标签。
 """
 from __future__ import annotations
 
@@ -25,16 +27,14 @@ from shader_agent.corpus.models import ShaderRecord
 from shader_agent.utils.logger import logger
 
 
-# 受控词表（也用于 LLM 复核）
+# v2 受控词表
 TOPIC_VOCAB: list[str] = [
-    "raymarching",
-    "sdf",
-    "noise",
-    "fractal",
-    "post-processing",
-    "2d-pattern",
-    "lighting",
-    "animation",
+    "raymarching", "sdf", "noise", "fractal",
+    "post-processing", "2d-pattern", "lighting", "animation",
+    "color-grading", "glitch", "distortion", "blur",
+    "transition", "stylize", "kaleidoscope", "tiling",
+    "feedback", "geometry", "masking", "audio-reactive",
+    "uncategorized",
 ]
 
 
@@ -75,10 +75,25 @@ _RE_LIGHTING = re.compile(
     re.IGNORECASE,
 )
 _RE_ANIMATION = re.compile(r"\biTime\b")
+# 2d-pattern 正向信号：平铺 / 棋盘 / 网格 / 显式图案关键词。
+# 不再匹配裸 `uv` 或 `fragCoord/iResolution`——它们几乎出现在每个 shader 里，会把
+# 2d-pattern 变成垃圾桶标签。
+_RE_2D_PATTERN = re.compile(
+    r"\b(tile|tiling|truchet|checker|checkerboard|grid|"
+    r"voronoi|hex\s*grid|polar\s*coord|kaleidoscop)\b",
+    re.IGNORECASE,
+)
 
 
 def rule_tag(rec: ShaderRecord) -> list[str]:
-    """基于规则给 rec 打主题标签（不修改 rec）。"""
+    """基于规则给 rec 打主题标签（不修改 rec）。
+
+    打标优先顺序：
+    1. 外部已映射的 tags_topic（来自 ISF/load 阶段的 categories 映射）——跳过关键词正则；
+    2. 关键词正则追加；
+    3. ``2d-pattern`` 仅在有正向 2D 信号时打（不再用排除法兜底）；
+    4. 全空则落 ``uncategorized``。
+    """
     text = "\n".join(
         [
             rec.name or "",
@@ -91,6 +106,14 @@ def rule_tag(rec: ShaderRecord) -> list[str]:
 
     tags: list[str] = []
 
+    # 步骤 1：优先保留外部已映射的标签（来自 ISF / shaders21k 的 categories 映射）
+    # 这些映射由 category_map.isf_categories_to_tags 在 load 阶段通过 tags_topic 传入
+    if rec.tags_topic:
+        # 去掉可能存在的旧 v1 标签（由更精确的映射取代）
+        pass  # tags_topic 已由 load 函数写入，保留之
+        tags.extend(rec.tags_topic)
+
+    # 步骤 2：关键词正则追加（不重复添加已有标签）
     has_ray = bool(_RE_RAYMARCH.search(text))
     has_sdf = bool(_RE_SDF.search(text))
     has_noise = bool(_RE_NOISE.search(text))
@@ -100,30 +123,31 @@ def rule_tag(rec: ShaderRecord) -> list[str]:
     has_anim = bool(_RE_ANIMATION.search(text))
     has_kaleido = bool(_RE_KALEIDO.search(text))
 
-    if has_ray:
-        tags.append("raymarching")
-    if has_sdf:
-        tags.append("sdf")
-    if has_noise:
-        tags.append("noise")
-    if has_frac:
-        tags.append("fractal")
-    if has_post:
-        tags.append("post-processing")
-    if has_light:
-        tags.append("lighting")
-    if has_anim:
-        tags.append("animation")
+    regex_map = {
+        "raymarching": has_ray,
+        "sdf": has_sdf,
+        "noise": has_noise,
+        "fractal": has_frac,
+        "post-processing": has_post,
+        "lighting": has_light,
+        "animation": has_anim,
+        "kaleidoscope": has_kaleido,
+    }
+    for tag_name, flag in regex_map.items():
+        if flag and tag_name not in tags:
+            tags.append(tag_name)
 
-    # 启发式：既不是 raymarching/fractal 又匹配"2D 坐标变换 + 没有 vec3 几何"则归为 2d-pattern
-    # kaleidoscope 是 2d-pattern 的明确信号
-    if has_kaleido or (not (has_ray or has_frac)):
-        if has_kaleido or ("iResolution" in text and "vec3" not in (rec.code_image or "")[:300]):
-            tags.append("2d-pattern")
+    # 步骤 3：2d-pattern —— 仅在有明确的平铺/图案信号时打。
+    # 不使用"含 iResolution 且开头没有 vec3 就算 2D"这类排除法：它会把绝大多数
+    # shader 误判为 2d-pattern，正是标签分布失衡的根源。
+    has_2d_signal = bool(has_kaleido or _RE_2D_PATTERN.search(text))
 
-    # 兜底，避免空
-    if not tags:
+    if has_2d_signal and "2d-pattern" not in tags:
         tags.append("2d-pattern")
+
+    # 步骤 4：全空才落 uncategorized
+    if not tags:
+        tags.append("uncategorized")
 
     # 去重保序
     seen = set()
@@ -197,13 +221,21 @@ def tag_records(
     *,
     use_llm: bool | None = None,
 ) -> list[ShaderRecord]:
-    """给所有记录打标签（in-place 修改 tags_topic 字段）。"""
+    """给所有记录打标签（in-place 修改 tags_topic 字段）。
+
+    v2 打标策略：
+    1. 对已有外部分类映射的记录（ISF），保留映射标签并用关键词正则补充；
+    2. 对无外部分类映射的记录，纯关键词正则；
+    3. LLM 复核仅在规则结果全空（uncategorized）时可选触发。
+    """
     use_llm = settings.corpus.enable_llm_tagging if use_llm is None else use_llm
     n_llm = 0
     for rec in records:
+        # 如果记录已有 tags_topic（来自 isf_loader 的 categories 映射），作为基础
+        # 否则用纯规则
         tags = rule_tag(rec)
-        # 若开启 LLM 复核且规则结果只有兜底 2d-pattern，调用 LLM 二审
-        if use_llm and tags == ["2d-pattern"]:
+        # LLM 复核：仅当规则落在 uncategorized 且启用时
+        if use_llm and tags == ["uncategorized"]:
             llm_tags = llm_tag(rec)
             if llm_tags:
                 tags = llm_tags

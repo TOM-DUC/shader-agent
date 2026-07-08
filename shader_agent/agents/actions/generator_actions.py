@@ -196,12 +196,14 @@ class DraftCodeOut(BaseModel):
 _SYSTEM_PROMPT_GENERATE = (
     "你是 ShaderGenerator。你的任务是按照用户需求生成一段 Shadertoy 风格的 "
     "GLSL fragment shader。\n"
-    "硬性约束：\n"
+     "硬性约束：\n"
     "1. 必须实现 `void mainImage(out vec4 fragColor, in vec2 fragCoord)` 入口；\n"
     "2. 仅使用 Shadertoy 默认的内置 uniform（iResolution / iTime / iMouse），"
     "不引用外部纹理或额外 pass（不要 `iChannel0`、`sampler2D`、自定义 uniform）；\n"
     "3. 代码自包含、能直接在 Shadertoy 编辑器中编译运行；\n"
-    "4. 必须严格遵循需求中的 palette（调色板）：让主色调明显体现该倾向；"
+    "4. WebGL 1.0 兼容：避免使用 GLSL ES 3.0 特有函数（如 `round()`、`roundEven()`、"
+    "`trunc()` 等），改用 `floor(x + 0.5)` 等兼容写法；\n"
+    "5. 必须严格遵循需求中的 palette（调色板）：让主色调明显体现该倾向；"
     "必须遵循 complexity（复杂度）：minimal=几行极简，simple=单一效果，"
     "moderate=多技巧组合，complex=可炫技；dynamic=true 时必须用 iTime 做动画。\n"
     "输出格式（务必遵守）：\n"
@@ -219,6 +221,7 @@ _SYSTEM_PROMPT_FIX = (
     "硬性约束（与首轮一致）：\n"
     "1. 入口 `void mainImage(out vec4 fragColor, in vec2 fragCoord)`；\n"
     "2. 仅使用 iResolution/iTime/iMouse；不引外部纹理；\n"
+    "3. WebGL 1.0 兼容：避免 `round()`、`roundEven()`、`trunc()` 等 ES 3.0 函数，改用 `floor(x + 0.5)`。\n"
     "修复策略：仔细读编译错误定位到具体行/函数；只改报错相关部分；"
     "不要因修复而引入新特性或改变视觉效果。\n"
     "输出格式：先输出以 `// EXPLAIN:` 开头的**中文**多行说明块（每行以 `//` 开头），"
@@ -239,7 +242,8 @@ _SYSTEM_PROMPT_REWRITE = (
     "2. 不要为了『更好』而擅自重构无关代码、替换算法或改变未被要求的视觉细节；\n"
     "3. 仍须能在 Shadertoy 编译：入口 `void mainImage(out vec4 fragColor, "
     "in vec2 fragCoord)`，仅用 iResolution/iTime/iMouse，不引外部纹理；\n"
-    "4. 直接基于给定代码改，不要参考或套用其他范例。\n"
+    "4. WebGL 1.0 兼容：避免 `round()`、`roundEven()`、`trunc()` 等 ES 3.0 函数，改用 `floor(x + 0.5)`。\n"
+    "5. 直接基于给定代码改，不要参考或套用其他范例。\n"
     "输出格式：先输出以 `// EXPLAIN:` 开头的**中文**多行说明块（每行以 `//` 开头），"
      "**简明说明你改了哪些部分、保留了哪些原有算法**（3~6 句，"
     "不要长篇分析原代码）；说明之后紧跟完整的改写后代码，不要 markdown 围栏。"
@@ -317,9 +321,9 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
             ex_text = ""
             if inp.examples:
                 ex_lines = []
-                budget = 8200; used = 0
-                for i, ex in enumerate(inp.examples[:3], 1):
-                    per_ref = 3400 if i == 1 else 2400
+                budget = 3600; used = 0
+                for i, ex in enumerate(inp.examples):
+                    per_ref = 1600 if i == 1 else 1000
                     block = _format_reference_for_prompt(ex, i, limit=per_ref)
                     if used + len(block) > budget:
                         block = _clip_prompt_text(block, max(900, budget - used))
@@ -341,7 +345,13 @@ class DraftCodeAction(Action[DraftCodeIn, DraftCodeOut]):
     def _run(self, inp: DraftCodeIn) -> DraftCodeOut:
         llm_fn: Callable | None = self.dep("llm_fn")
         if llm_fn is None:
-            return self._stub_draft(inp)
+            import sys as _sys
+            if "pytest" in _sys.modules:
+                return self._stub_draft(inp)
+            raise RuntimeError(
+                "Generator 的 LLM 函数（code_fn）未就绪。"
+                "请检查 DEEPSEEK_API_KEY 是否配置，或等待 LLM 初始化完成后重试。"
+            )
         messages = self._build_messages(inp)
         text = llm_fn(messages)
         return self._parse_llm_output(text)

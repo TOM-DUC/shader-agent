@@ -41,8 +41,8 @@ class AssemblyOptions:
     use_vector_store: str = "auto"      # "auto" | "off"
     use_llm_cache: bool = True
     enable_self_critique: bool = False
-    max_fix_loops: int = 2
-    top_k: int = 3
+    max_fix_loops: int = 1
+    top_k: int = 1
 
 
 @dataclass
@@ -89,36 +89,86 @@ def _build_llm_fns(use_cache: bool):
         return None, None, None, None, None, f"llm_fn 装配失败: {e}"
 
 
+_VSTORE_SINGLETON: Any = None
+
+
 def _build_vector_store(use_vstore: str):
-    """按需懒加载 vector store。失败返回 (None, reason)。"""
+    """按需懒加载 vector store。失败返回 (None, reason)。
+
+    ShaderVectorStore 内部会打开一个 ChromaDB PersistentClient；每次 UI 选项
+    变化都重建会反复打开同一目录的客户端，既慢又可能产生文件锁竞争。这里把它
+    缓存成进程级单例，全程只打开一次。
+    """
+    global _VSTORE_SINGLETON
     if use_vstore == "off":
         return None, "用户在 UI 中关闭了向量库"
     try:
-        from shader_agent.corpus.vector_store import ShaderVectorStore
-        vs = ShaderVectorStore()
-        if vs.count() == 0:
+        if _VSTORE_SINGLETON is None:
+            from shader_agent.corpus.vector_store import ShaderVectorStore
+            _VSTORE_SINGLETON = ShaderVectorStore()
+        vs = _VSTORE_SINGLETON
+        shader_n = vs.count()
+        chunk_n = vs.chunk_count()
+        if shader_n == 0 and chunk_n == 0:
             return None, "向量库为空。运行 `python -m scripts.build_corpus` 先建库。"
-        return vs, f"已连接（{vs.count()} 条）"
+        if chunk_n > 0:
+            return vs, f"已连接（{chunk_n} 子块 / {shader_n} 条）"
+        return vs, f"已连接（{shader_n} 条）"
     except Exception as e:
         return None, f"向量库不可用: {e}"
+
+
+def _warmup_models_sequential(retriever: Any, reranker: Any) -> None:
+    """串行预热嵌入模型与重排模型。
+
+    两个模型权重都在 GB 级（各约 2.2GB），6GB 显存无法同时加载两者，因此串行
+    预热：先加载 embedder 完成后再加载 reranker，避免 CUDA OOM 导致模型降级到 CPU。
+    任一失败都不致命，正式检索时会自然回退。
+    """
+    # 1) 预热 embedder
+    try:
+        from shader_agent.embeddings.bge_embedder import get_embedder
+        get_embedder().embed_one("warmup")
+        logger.info("[warmup] embedder 预热完成")
+    except Exception as e:
+        logger.warning(f"[warmup] embedder 预热跳过: {e}")
+
+    # 2) 预热 reranker（交叉编码器）
+    try:
+        reranker.rerank("warmup", [{"text": "warmup", "fused_score": 0.0}])
+        logger.info("[warmup] reranker 预热完成")
+    except Exception as e:
+        logger.warning(f"[warmup] reranker 预热跳过: {e}")
+
+
+_KSTORE_SINGLETON: Any = None
+_PSTORE_SINGLETON: Any = None
 
 
 def _build_retriever(vstore: Any):
     """围绕向量库装配混合检索器（向量 + BM25 + 父文档 + 可选重排）。
 
     任一辅助组件缺失都不致命：HybridRetriever 内部会自动降级为 shader 级向量检索。
+    KeywordStore / ParentDocumentStore / Reranker 全部做成进程级单例，避免每次
+    装配都重新读取 17000+ 条关键词索引 JSON 或重复加载重排模型。
     """
+    global _KSTORE_SINGLETON, _PSTORE_SINGLETON
     if vstore is None:
         return None, "无向量库，混合检索不可用"
     try:
         from shader_agent.corpus.keyword_store import KeywordStore
         from shader_agent.corpus.parent_store import ParentDocumentStore
-        from shader_agent.corpus.reranker import Reranker
+        from shader_agent.corpus.reranker import get_reranker
         from shader_agent.corpus.retriever import HybridRetriever
 
-        kstore = KeywordStore.load()
-        pstore = ParentDocumentStore()
-        reranker = Reranker(
+        if _KSTORE_SINGLETON is None:
+            _KSTORE_SINGLETON = KeywordStore.load()
+        if _PSTORE_SINGLETON is None:
+            _PSTORE_SINGLETON = ParentDocumentStore()
+        kstore = _KSTORE_SINGLETON
+        pstore = _PSTORE_SINGLETON
+        # 进程级单例：交叉编码器权重很大，复用同一实例避免重复数十秒加载
+        reranker = get_reranker(
             model_name=settings.retrieval.reranker_model,
             enabled=settings.retrieval.use_rerank,
         )
@@ -128,6 +178,10 @@ def _build_retriever(vstore: Any):
             parent_store=pstore,
             reranker=reranker,
         )
+        # 已废弃：不在用户请求路径里同步预热模型，改由 _warmup_background 后台线程负责。
+        # 如需强制同步预热可设环境变量 SHADER_AGENT_SYNC_WARMUP=1。
+        if os.environ.get("SHADER_AGENT_SYNC_WARMUP", "0") == "1":
+            _warmup_models_sequential(retr, reranker)
         chunk_n = vstore.chunk_count()
         if chunk_n > 0 and pstore.count() > 0:
             label = f"混合检索（{chunk_n} 子块 / BM25 {kstore.count()}）"
@@ -454,6 +508,7 @@ def run_generate(user_text: str, opts: AssemblyOptions,
         png, png_err = render_code_to_png(g.code, opts)
         if png_err:
             out["diagnostics"].append("生成侧渲染: " + png_err)
+        out["image"] = png_to_pil(png)
         out["ok"] = True
     except Exception as e:
         logger.exception("[ui] run_generate 异常")
@@ -530,6 +585,7 @@ def run_collaborate(code: str, ask: str, opts: AssemblyOptions) -> dict[str, Any
         png1, png_err = render_code_to_png(gen.code, opts)
         if png_err:
             out["diagnostics"].append("协作侧新版渲染: " + png_err)
+        out["image_after"] = png_to_pil(png1)
         out["ok"] = True
     except Exception as e:
         logger.exception("[ui] run_collaborate 异常")

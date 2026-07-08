@@ -53,6 +53,28 @@ def _has_local_model(cache_dir: Path, model_name: str = "BAAI/bge-m3") -> bool:
     return False
 
 
+def _resolve_config_cache_dir(project_root: Path) -> str | None:
+    """尝试从 config.yaml 读取 embedding.cache_dir，返回绝对路径或 None。"""
+    try:
+        import yaml
+        cfg_path = project_root / "config.yaml"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            cache_rel = (data.get("embedding") or {}).get("cache_dir")
+            if cache_rel:
+                abs_path = project_root / cache_rel
+                if abs_path.exists():
+                    return str(abs_path.resolve())
+                # 也可能是绝对路径
+                alt = Path(cache_rel)
+                if alt.is_absolute() and alt.exists():
+                    return str(alt.resolve())
+    except Exception:
+        pass
+    return None
+
+
 def apply() -> dict[str, str]:
     """根据环境与本地缓存决定是否开启离线模式，并写入环境变量。
 
@@ -61,25 +83,34 @@ def apply() -> dict[str, str]:
     force_online = os.environ.get("SHADER_AGENT_HF_ONLINE", "") == "1"
     force_offline = os.environ.get("SHADER_AGENT_HF_OFFLINE", "") == "1"
 
-    # 计算模型缓存目录：默认 <project_root>/data/models
+    # 计算模型缓存目录：优先 config.yaml 的 embedding.cache_dir，其次环境变量，最后默认
     project_root = Path(__file__).resolve().parents[1]
+    config_dir = _resolve_config_cache_dir(project_root)
     cache_dir = Path(
-        os.environ.get("SHADER_AGENT_MODELS_DIR", project_root / "data" / "models")
+        os.environ.get("SHADER_AGENT_MODELS_DIR", config_dir or project_root / "data" / "models")
     )
+
+    # 若上游入口（如 scripts/run_ui.py）已显式置 HF_HUB_OFFLINE=1，则尊重之
+    env_already_offline = os.environ.get("HF_HUB_OFFLINE", "") == "1"
 
     if force_online:
         offline = False
-    elif force_offline:
+    elif force_offline or env_already_offline:
         offline = True
     else:
-        # 默认策略：本地有缓存 → 离线；没有 → 在线（允许首次下载）
+        # 默认策略：本地有缓存 → 离线；没有 → 在线（允许首次下载）。
+        # 注意：检测失败时宁可走离线，避免无外网环境下每个文件 5 次
+        # 指数退避（约 23s）累加导致启动卡顿数分钟（WinError 10060）。
         offline = _has_local_model(cache_dir)
 
-    # 关闭遥测与隐式 token（无论在线离线，都减少无谓网络）
+    # 关闭遥测、隐式 token、新一代加速器（无网环境下它们都会触发额外探测/超时）
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
-    # 关闭进度条以外的多余检查
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    # tokenizers 在多线程（Gradio worker + 后台预热）下并发借用 Rust 对象会抛
+    # "Already borrowed"；关闭其内部并行，配合上层编码锁可彻底规避。
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     if offline:
         # 这三个是关键：阻止所有对 huggingface.co 的 HEAD / 转换请求

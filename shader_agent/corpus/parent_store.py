@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS parent_docs (
     source_url       TEXT,
     license          TEXT,
     tags_topic       TEXT,
+    categories       TEXT,
     key_functions    TEXT,
     visual_features  TEXT,
     algorithm_summary TEXT,
@@ -34,9 +35,18 @@ CREATE TABLE IF NOT EXISTS parent_docs (
     quality_score    REAL,
     code_image       TEXT,
     code_common      TEXT,
+    is_generator     INTEGER DEFAULT 1,
+    reference_only   INTEGER DEFAULT 0,
     indexed_at       TEXT
 );
 """
+
+# v1 → v2 迁移：旧表可能缺少三个新列
+_MIGRATE_V2_COLUMNS = [
+    ("categories", "TEXT"),
+    ("is_generator", "INTEGER DEFAULT 1"),
+    ("reference_only", "INTEGER DEFAULT 0"),
+]
 
 
 class ParentDocumentStore:
@@ -48,7 +58,19 @@ class ParentDocumentStore:
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate_v2()
         self._conn.commit()
+
+    def _migrate_v2(self) -> None:
+        """幂等地给旧表补充 v2 新列（无痛迁移）。"""
+        cursor = self._conn.execute("PRAGMA table_info(parent_docs)")
+        existing = {row[1] for row in cursor.fetchall()}
+        for col_name, col_type in _MIGRATE_V2_COLUMNS:
+            if col_name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE parent_docs ADD COLUMN {col_name} {col_type}"
+                )
+                logger.info(f"[parent] 迁移 v2: 新增列 {col_name} {col_type}")
 
     # ---------- 写入 ----------
     def upsert(self, records: list[ShaderRecord]) -> int:
@@ -57,30 +79,37 @@ class ParentDocumentStore:
             rows.append(
                 (
                     r.shader_id, r.name, r.username, r.source, r.source_url,
-                    r.license, ",".join(r.tags_topic), ",".join(r.key_functions),
+                    r.license, ",".join(r.tags_topic),
+                    ",".join(r.categories),
+                    ",".join(r.key_functions),
                     ",".join(r.visual_features), r.algorithm_summary,
                     int(r.compile_ok), int(r.render_ok), float(r.quality_score),
-                    r.code_image, r.code_common, r.indexed_at,
+                    r.code_image, r.code_common,
+                    int(r.is_generator), int(r.reference_only),
+                    r.indexed_at,
                 )
             )
         self._conn.executemany(
             """
             INSERT INTO parent_docs (
                 shader_id, name, username, source, source_url, license,
-                tags_topic, key_functions, visual_features, algorithm_summary,
-                compile_ok, render_ok, quality_score, code_image, code_common,
-                indexed_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                tags_topic, categories, key_functions, visual_features,
+                algorithm_summary, compile_ok, render_ok, quality_score,
+                code_image, code_common, is_generator, reference_only, indexed_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(shader_id) DO UPDATE SET
                 name=excluded.name, username=excluded.username,
                 source=excluded.source, source_url=excluded.source_url,
                 license=excluded.license, tags_topic=excluded.tags_topic,
+                categories=excluded.categories,
                 key_functions=excluded.key_functions,
                 visual_features=excluded.visual_features,
                 algorithm_summary=excluded.algorithm_summary,
                 compile_ok=excluded.compile_ok, render_ok=excluded.render_ok,
                 quality_score=excluded.quality_score,
                 code_image=excluded.code_image, code_common=excluded.code_common,
+                is_generator=excluded.is_generator,
+                reference_only=excluded.reference_only,
                 indexed_at=excluded.indexed_at
             """,
             rows,
@@ -113,10 +142,13 @@ class ParentDocumentStore:
     def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
         d["tags_topic"] = [t for t in (d.get("tags_topic") or "").split(",") if t]
+        d["categories"] = [c for c in (d.get("categories") or "").split(",") if c]
         d["key_functions"] = [t for t in (d.get("key_functions") or "").split(",") if t]
         d["visual_features"] = [t for t in (d.get("visual_features") or "").split(",") if t]
         d["compile_ok"] = bool(d.get("compile_ok"))
         d["render_ok"] = bool(d.get("render_ok"))
+        d["is_generator"] = bool(d.get("is_generator", True))
+        d["reference_only"] = bool(d.get("reference_only", False))
         return d
 
     def count(self) -> int:

@@ -64,6 +64,7 @@ class BGEEmbedder:
 
         self._model = None
         self._lock = threading.Lock()
+        self._encode_lock = threading.Lock()
 
     # ---------- 懒加载 ----------
     def _load(self) -> None:
@@ -130,13 +131,14 @@ class BGEEmbedder:
             return np.zeros((0, 0), dtype=np.float32)
         self._load()
         assert self._model is not None
-        arr = self._model.encode(
-            texts_list,
-            batch_size=self.batch_size,
-            normalize_embeddings=self.normalize,
-            convert_to_numpy=True,
-            show_progress_bar=len(texts_list) > 16,
-        )
+        with self._encode_lock:
+            arr = self._model.encode(
+                texts_list,
+                batch_size=self.batch_size,
+                normalize_embeddings=self.normalize,
+                convert_to_numpy=True,
+                show_progress_bar=len(texts_list) > 16,
+            )
         return arr.astype(np.float32)
 
     def embed_one(self, text: str) -> np.ndarray:
@@ -160,10 +162,13 @@ class BGEEmbedder:
 
 # 全局单例（懒加载，不在 import 时下载模型）
 _embedder_singleton: BGEEmbedder | None = None
+_embedder_singleton_lock = threading.Lock()
 
 
 def get_embedder() -> BGEEmbedder:
     global _embedder_singleton
     if _embedder_singleton is None:
-        _embedder_singleton = BGEEmbedder()
+        with _embedder_singleton_lock:
+            if _embedder_singleton is None:
+                _embedder_singleton = BGEEmbedder()
     return _embedder_singleton

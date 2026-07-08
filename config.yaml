@@ -76,7 +76,7 @@ embedding:
   # 批量编码大小
   batch_size: 8
   # 模型本地缓存目录（None 则使用 HF 默认 ~/.cache/huggingface）
-  cache_dir: "data/models"
+  cache_dir: "D:/models"
 
 # === 向量库 ===
 vector_store:
@@ -97,5 +97,7 @@ retrieval:
   # 融合分阈值：低于此值不返回参考，宁缺毋滥
   min_score: 0.15
   # 是否启用交叉编码器重排（无依赖/无显存时自动降级为启发式排序）
+  # 已打开：重排模型走进程级单例 + 锁内加载，只在后台预热时加载一次，
+  # 不会拖慢首屏；显存不足或权重缺失会自动回退到启发式排序，不影响可用性。
   use_rerank: true
   reranker_model: "BAAI/bge-reranker-v2-m3"

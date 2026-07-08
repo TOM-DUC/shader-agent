@@ -121,8 +121,12 @@ class ShaderVectorStore:
             )
         return self._chunk_coll
 
-    def upsert_chunks(self, records: list[ShaderRecord]) -> int:
-        """把每条 shader 切成父子子块并写入子块集合。返回写入子块数。"""
+    def upsert_chunks(self, records: list[ShaderRecord], batch_size: int = 5000) -> int:
+        """把每条 shader 切成父子子块并写入子块集合。返回写入子块数。
+
+        Args:
+            batch_size: ChromaDB 单次 upsert 上限（默认 5000 < 5461 限制）。
+        """
         if not records:
             return 0
         coll = self._chunk_collection()
@@ -131,24 +135,33 @@ class ShaderVectorStore:
             all_chunks.extend(chunk_shader(r))
         if not all_chunks:
             return 0
-        ids = [c.chunk_id for c in all_chunks]
-        docs = [c.text for c in all_chunks]
-        metas = [
-            {
-                "parent_id": c.parent_id,
-                "kind": c.kind,
-                "title": c.title,
-                **{k: v for k, v in c.meta.items() if isinstance(v, (str, int, float, bool))},
-            }
-            for c in all_chunks
-        ]
-        embs: np.ndarray = self.embedder.embed(docs)
-        coll.upsert(ids=ids, embeddings=embs.tolist(), documents=docs, metadatas=metas)
+
+        total = 0
+        for start in range(0, len(all_chunks), batch_size):
+            batch = all_chunks[start:start + batch_size]
+            ids = [c.chunk_id for c in batch]
+            docs = [c.text for c in batch]
+            metas = [
+                {
+                    "parent_id": c.parent_id,
+                    "kind": c.kind,
+                    "title": c.title,
+                    **{k: v for k, v in c.meta.items() if isinstance(v, (str, int, float, bool))},
+                }
+                for c in batch
+            ]
+            embs: np.ndarray = self.embedder.embed(docs)
+            coll.upsert(ids=ids, embeddings=embs.tolist(), documents=docs, metadatas=metas)
+            total += len(batch)
+            logger.info(
+                f"[vstore] batch upserted {len(batch)} chunks ({total}/{len(all_chunks)})"
+            )
+
         logger.info(
-            f"[vstore] upserted {len(all_chunks)} chunks from {len(records)} shaders; "
+            f"[vstore] upserted {total} chunks from {len(records)} shaders; "
             f"chunk total={coll.count()}"
         )
-        return len(all_chunks)
+        return total
 
     def query_chunks(
         self,

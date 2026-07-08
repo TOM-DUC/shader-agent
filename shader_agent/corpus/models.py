@@ -35,14 +35,17 @@ class ShaderRecord(BaseModel):
     viewed: int = 0
     tags_raw: list[str] = Field(default_factory=list)  # 原始 tags
     passes: list[RenderPass] = Field(default_factory=list)
-    source: str = "shadertoy"  # 来源：shadertoy / seed / local
+    source: str = "shadertoy"  # 来源：shadertoy / seed / local / isf / shaders21k
 
     # ---- 清洗与打标产物 ----
-    code_image: str = ""           # 仅 Image pass 的代码（首版主要用）
+    code_image: str = ""           # 仅 Image pass 的代码
     code_common: str = ""          # 可选的 Common pass
     code_hash: str = ""            # 去重用
     tags_topic: list[str] = Field(default_factory=list)  # 标签：raymarching/sdf/...
+    categories: list[str] = Field(default_factory=list)  # ISF 原始分类 / 外部分类
     has_external_assets: bool = False  # texture/cubemap/keyboard/buffer 等外部输入
+    is_generator: bool = True      # True=可独立渲染（无外部贴图依赖）
+    reference_only: bool = False   # True=仅作参考不进渲染范例池
 
     # ---- 来源与许可（可追溯）----
     source_url: str = ""           # 原始链接，便于回溯与署名
@@ -105,7 +108,10 @@ class ShaderRecord(BaseModel):
             "source": self.source,
             "tags_topic": ",".join(self.tags_topic),
             "tags_raw": ",".join(self.tags_raw),
+            "categories": ",".join(self.categories),
             "has_external_assets": bool(self.has_external_assets),
+            "is_generator": bool(self.is_generator),
+            "reference_only": bool(self.reference_only),
             "code_chars": len(self.code_image or ""),
             # 质量与来源：用于检索时过滤与排序、结果可追溯
             "source_url": self.source_url,

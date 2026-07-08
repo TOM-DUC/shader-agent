@@ -11,6 +11,23 @@
 """
 from __future__ import annotations
 
+import os
+
+# ── 离线 & 启动加速开关：必须在任何 transformers/torch 导入之前设置 ──
+# 模型已下载到本地（见 config.yaml: embedding.cache_dir），禁止任何联网检查，
+# 否则无外网环境下每个权重文件会触发多次指数退避超时，启动被拖慢数分钟。
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# 关闭 tokenizers 内部并行，规避多线程下的 "Already borrowed" 报错
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# 持久化 CUDA kernel 编译缓存，避免每次重启 app 都重新编译（从 ~40s 降到 ~5s）
+_TORCH_CACHE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".cache", "torch_extensions"))
+os.makedirs(_TORCH_CACHE, exist_ok=True)
+os.environ.setdefault("TORCH_EXTENSIONS_DIR", _TORCH_CACHE)
+
 import argparse
 import sys
 

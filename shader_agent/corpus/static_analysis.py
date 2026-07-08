@@ -72,39 +72,66 @@ def build_algorithm_summary(rec: ShaderRecord, key_funcs: list[str]) -> str:
     )
 
 
+def _compile_any_entry(code: str) -> bool:
+    """自适应检查 shader 是否含有可编译入口。
+
+    兼容两种格式：
+    - Shadertoy 风格：``mainImage(out vec4 fragColor, in vec2 fragCoord)``
+    - GLSL 裸风格：``void main()`` + ``gl_FragColor``
+    - 通用：只要存在 main 或 mainImage 且至少有颜色输出
+    """
+    has_main_image = "mainImage" in code and ("fragColor" in code or "gl_FragColor" in code)
+    has_main = "void main" in code and ("gl_FragColor" in code or "fragColor" in code)
+    return has_main_image or has_main
+
+
 def score_quality(rec: ShaderRecord) -> float:
     """综合质量评分（0~1）。
 
     维度与权重：
-    - 编译通过 0.35：能编译是参考价值的底线；
-    - 渲染成功 0.20：能渲染出非空帧说明逻辑自洽；
-    - 结构完整 0.15：有 mainImage 入口与至少一个自定义函数；
-    - 受欢迎度 0.15：likes 经对数压缩，避免头部样本碾压；
-    - 标签覆盖 0.15：命中受控主题词表越多越利于检索。
+    - 编译通过 0.40：兼容 Shadertoy ``fragColor`` 与 GLSL ``gl_FragColor`` 两种入口写法；
+    - 渲染成功 0.15：真实渲染出非空帧；
+    - 结构完整 0.10：有入口且至少一个自定义函数；
+    - 受欢迎度 0.10：likes 经对数压缩（ISF/shaders21k 无 likes 时该项为 0）；
+    - 标签覆盖 0.15：命中受控主题词表越多越利于检索；
+    - 代码行数 0.10：过短或过长都扣分；
+    - 干净度 0.10：``reference_only=False`` 且 ``has_external_assets=False`` 加分。
     """
     import math
 
     score = 0.0
     if rec.compile_ok:
-        score += 0.35
+        score += 0.40
     if rec.render_ok:
-        score += 0.20
+        score += 0.15
 
     code = rec.code_image or ""
-    has_entry = "mainImage" in code
+    has_entry = _compile_any_entry(code)
     func_count = len(extract_key_functions(code))
     if has_entry and func_count >= 1:
-        score += 0.15
+        score += 0.10
     elif has_entry:
-        score += 0.08
+        score += 0.05
 
-    # likes 对数压缩到 [0, 1]，1000 赞约 0.5，100000 赞约 1.0
+    # likes 对数压缩（ISF/s21k 可能无 likes）
     likes = max(int(rec.likes or 0), 0)
     pop = math.log10(likes + 1) / 5.0
-    score += 0.15 * min(pop, 1.0)
+    score += 0.10 * min(pop, 1.0)
 
-    tag_cov = min(len(rec.tags_topic or []), 3) / 3.0
+    # 标签覆盖：v2 词表 21 类，max 取 4 类
+    tag_cov = min(len(rec.tags_topic or []), 4) / 4.0
     score += 0.15 * tag_cov
+
+    # 代码行数：50~500 行最佳，太短或太长扣分
+    loc = len(code.splitlines())
+    if 50 <= loc <= 500:
+        score += 0.10
+    elif 20 <= loc < 50 or 500 < loc <= 800:
+        score += 0.05
+
+    # 干净度：非参考 + 无外部资源
+    if not rec.reference_only and not rec.has_external_assets:
+        score += 0.10
 
     return round(min(score, 1.0), 4)
 
@@ -120,9 +147,9 @@ def analyze_record(rec: ShaderRecord) -> ShaderRecord:
     rec.visual_features = infer_visual_features(rec)
     rec.algorithm_summary = build_algorithm_summary(rec, rec.key_functions)
 
-    # 未做真实编译时，用"有入口 + 基本结构"作为保守近似
+    # 未做真实编译时，用格式自适应的入口检查作为保守近似
     if not rec.compile_ok:
-        rec.compile_ok = ("mainImage" in code) and ("fragColor" in code)
+        rec.compile_ok = _compile_any_entry(code)
 
     rec.quality_score = score_quality(rec)
     rec.mark_indexed()

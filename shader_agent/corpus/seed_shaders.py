@@ -28,6 +28,7 @@ def _mk(
     description: str,
     code: str,
     tags_raw: list[str] | None = None,
+    tags_topic: list[str] | None = None,
 ) -> ShaderRecord:
     return ShaderRecord(
         shader_id=shader_id,
@@ -37,6 +38,7 @@ def _mk(
         likes=999,
         viewed=0,
         tags_raw=tags_raw or [],
+        tags_topic=tags_topic or [],
         source="seed",
         passes=[RenderPass(name="Image", type="image", code=code)],
         code_image=code,
@@ -1000,7 +1002,260 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 ]
 
 
-SEED_SHADERS: list[ShaderRecord] = _V1_SEEDS + _V2_SEEDS
+# ========================================================================
+# v3 段（seed30 ~ seed41）：覆盖 v2 新增的 11 个主题。
+# 均为自包含、Shadertoy 兼容、无外部贴图的最小教学示例。
+# ========================================================================
+_V3_SEEDS: list[ShaderRecord] = [
+    _mk(
+        "seed30",
+        "Color Grading",
+        "Adjust hue and saturation to demonstrate color-grading technique",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = vec3(uv.x, uv.y, 0.5 + 0.5 * sin(iTime));
+    float gray = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(vec3(gray), col, 1.5);
+    col.rb = col.rb * mat2(cos(0.5), -sin(0.5), sin(0.5), cos(0.5));
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["color", "grading", "hue", "saturation"],
+        tags_topic=["color-grading"],
+    ),
+    _mk(
+        "seed31",
+        "Glitch Effect",
+        "Digital glitch with RGB shift and noise bars",
+        """
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = vec3(uv, 0.5 + 0.5 * sin(iTime));
+    float g = hash(vec2(floor(iTime * 4.0), 0.0));
+    if (g > 0.6) {
+        float bar = step(0.5, hash(vec2(floor(uv.y * 40.0), 1.0)));
+        vec2 shift = vec2(0.05, 0.0) * bar;
+        col.r = mix(col.r, 1.0 - col.r, bar * 0.5);
+        col.g = mix(col.g, col.b, bar);
+        col.rb *= 0.6 + 0.4 * bar;
+        col.rb = col.rb * mat2(cos(g * 3.0), -sin(g * 3.0), sin(g * 3.0), cos(g * 3.0));
+    }
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["glitch", "rgb", "shift", "noise"],
+        tags_topic=["glitch"],
+    ),
+    _mk(
+        "seed32",
+        "Distortion",
+        "Lens distortion effect using radial warp",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+    float d = length(uv);
+    vec2 distorted = uv * (1.0 + 0.3 * d * d);
+    vec2 colUv = distorted * iResolution.y / iResolution.x + 0.5;
+    vec3 col = vec3(colUv, 0.5 + 0.5 * sin(iTime));
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["distortion", "lens", "warp", "radial"],
+        tags_topic=["distortion"],
+    ),
+    _mk(
+        "seed33",
+        "Blur Effect",
+        "Simple box blur using neighborhood averaging",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = vec3(0.0);
+    float kernel[9];
+    for (int i = 0; i < 9; i++) kernel[i] = 1.0 / 9.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 off = vec2(x, y) / iResolution.xy * 3.0;
+            col += kernel[(y + 1) * 3 + (x + 1)] * vec3(uv + off, 0.5);
+        }
+    }
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["blur", "box", "smooth", "filter"],
+        tags_topic=["blur"],
+    ),
+    _mk(
+        "seed34",
+        "Transition Wipe",
+        "Horizontal wipe transition between two color fields",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    float t = abs(sin(iTime * 0.5));
+    vec3 colA = vec3(uv.x, uv.y, 1.0);
+    vec3 colB = vec3(1.0 - uv.x, 1.0 - uv.y, 0.5);
+    float wipe = step(uv.x, t);
+    vec3 col = mix(colA, colB, wipe);
+    // edge highlight
+    col += vec3(1.0) * (1.0 - abs(uv.x - t) * 200.0) * 0.3;
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["transition", "wipe", "dissolve"],
+        tags_topic=["transition"],
+    ),
+    _mk(
+        "seed35",
+        "Stylize Halftone",
+        "Halftone dot pattern screen effect",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = vec3(uv, 0.5 + 0.5 * sin(iTime));
+    float gray = dot(col, vec3(0.299, 0.587, 0.114));
+    vec2 cell = floor(uv * vec2(40.0, 30.0));
+    vec2 cellUv = fract(uv * vec2(40.0, 30.0)) - 0.5;
+    float dot = smoothstep(0.5 - gray * 0.4, 0.5 - gray * 0.4 + 0.05, length(cellUv));
+    fragColor = vec4(vec3(dot), 1.0);
+}
+""".strip(),
+        tags_raw=["stylize", "halftone", "dot", "screen"],
+        tags_topic=["stylize"],
+    ),
+    _mk(
+        "seed36",
+        "Kaleidoscope",
+        "Radial kaleidoscope mirror pattern",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+    float a = atan(uv.y, uv.x);
+    float r = length(uv);
+    float seg = 6.0;
+    a = mod(a, 6.2831 / seg);
+    a = abs(a - 3.1416 / seg);
+    vec2 kUv = vec2(cos(a), sin(a)) * r;
+    vec3 col = 0.5 + 0.5 * cos(kUv.x * 10.0 + kUv.y * 5.0 + vec3(0.0, 1.0, 2.0));
+    fragColor = vec4(col * (1.0 - r * 0.3), 1.0);
+}
+""".strip(),
+        tags_raw=["kaleidoscope", "mirror", "radial", "symmetry"],
+        tags_topic=["kaleidoscope"],
+    ),
+    _mk(
+        "seed37",
+        "Tiling Pattern",
+        "Truchet tile pattern with diagonal curves",
+        """
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec2 cell = floor(uv * vec2(8.0, 6.0));
+    vec2 local = fract(uv * vec2(8.0, 6.0)) - 0.5;
+    float h = hash(cell);
+    float d = (h > 0.5) ? length(local - 0.3) : length(local + 0.3);
+    vec3 col = mix(vec3(0.9, 0.5, 0.3), vec3(0.3, 0.5, 0.9), smoothstep(0.2, 0.5, d));
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["tiling", "truchet", "pattern", "tile"],
+        tags_topic=["tiling"],
+    ),
+    _mk(
+        "seed38",
+        "Feedback Loop",
+        "Frame feedback accumulation effect using self-similarity",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = 0.5 + 0.5 * cos(uv.xyx * 8.0 + iTime + vec3(0.0, 1.0, 2.0));
+    vec2 feedUv = uv + 0.02 * vec2(sin(iTime * 0.5), cos(iTime * 0.3));
+    vec3 feed = 0.5 + 0.5 * cos(feedUv.xyx * 6.0 + iTime * 1.1 + vec3(1.0, 2.0, 0.0));
+    col = mix(col, feed, 0.4);
+    float bright = dot(col, vec3(0.299, 0.587, 0.114));
+    col *= 1.0 + 0.2 * (bright - 0.5);
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["feedback", "loop", "accumulate", "trail"],
+        tags_topic=["feedback"],
+    ),
+    _mk(
+        "seed39",
+        "Geometry Transform",
+        "Rotating 2D geometric shapes",
+        """
+float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
+float sdHex(vec2 p, float r) {
+    const vec3 k = vec3(-0.8660254, 0.5, 0.57735);
+    p = abs(p); p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+    return length(p - vec2(clamp(p.x, -k.z * r, k.z * r), r)) * sign(p.y - r);
+}
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+    float a = iTime * 0.5;
+    uv *= mat2(cos(a), -sin(a), sin(a), cos(a));
+    float d1 = sdBox(uv, vec2(0.3, 0.2));
+    vec2 uv2 = uv - vec2(0.5, 0.0);
+    float d2 = sdHex(uv2, 0.25);
+    float d = min(d1, d2);
+    vec3 col = mix(vec3(0.2, 0.4, 0.8), vec3(0.8, 0.2, 0.4), step(0.0, -d));
+    col += vec3(0.5) * (1.0 - abs(d) * 5.0);
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["geometry", "transform", "rotate", "shape"],
+        tags_topic=["geometry"],
+    ),
+    _mk(
+        "seed40",
+        "Masking Overlay",
+        "Circular vignette mask with gradient overlay",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 bg = vec3(uv, 0.5 + 0.5 * sin(iTime));
+    vec3 fg = vec3(0.9, 0.3, 0.5);
+    vec2 center = vec2(0.5, 0.5);
+    float mask = 1.0 - smoothstep(0.15, 0.45, distance(uv, center));
+    float softEdge = 1.0 - smoothstep(0.1, 0.5, distance(uv, center + vec2(0.2, 0.1)));
+    vec3 col = mix(bg, fg, mask * 0.7);
+    col = mix(col, vec3(0.0, 0.0, 0.0), softEdge * 0.4);
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["masking", "overlay", "vignette", "alpha"],
+        tags_topic=["masking"],
+    ),
+    _mk(
+        "seed41",
+        "Audio Reactive Visualizer",
+        "Simulated audio-reactive bars using sinusoidal frequency bands",
+        """
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = vec3(0.0);
+    for (float i = 0.0; i < 8.0; i += 1.0) {
+        float freq = 2.0 + i * 3.0;
+        float amp = 0.3 + 0.3 * sin(iTime * (1.0 + i * 0.2) + i * 1.5);
+        float bar = step(abs(uv.x - (i + 0.5) / 8.0), 0.04);
+        float h = step(1.0 - uv.y, amp);
+        col += bar * h * (0.5 + 0.5 * cos(i + vec3(0.0, 2.0, 4.0)));
+    }
+    col += 0.1 * (1.0 - abs(sin(uv.x * 80.0 + iTime * 10.0)));
+    fragColor = vec4(col, 1.0);
+}
+""".strip(),
+        tags_raw=["audio", "visualizer", "bars", "frequency"],
+        tags_topic=["audio-reactive"],
+    ),
+]
+
+
+SEED_SHADERS: list[ShaderRecord] = _V1_SEEDS + _V2_SEEDS + _V3_SEEDS
 
 
 def get_seed_shaders() -> list[ShaderRecord]:

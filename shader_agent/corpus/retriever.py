@@ -162,6 +162,17 @@ class HybridRetriever:
         self.min_score = getattr(cfg, "min_score", 0.15)
         self.use_rerank = getattr(cfg, "use_rerank", True)
 
+    def warmup(self) -> None:
+        """预热 CUDA kernel + 模型加载，避免首次检索过慢。
+
+        做一次 dummy 检索来触发 embedder、BM25、reranker 的懒加载与 CUDA 编译。
+        仅在 UI 启动时调用一次。
+        """
+        try:
+            self.retrieve("dummy warmup query", top_k=1)
+        except Exception:
+            pass
+
     # ---------- 主入口 ----------
     def retrieve(
         self,
@@ -275,13 +286,18 @@ class HybridRetriever:
                 }
             )
 
-        # 5) 可选重排
-        if self.use_rerank and self.reranker is not None:
-            candidates = self.reranker.rerank(query, candidates)
+        # 5) 可选重排（先按融合分截断候选，避免对长尾候选做昂贵的交叉编码）
+        if self.use_rerank and self.reranker is not None and candidates:
+            rerank_cap = 30
+            candidates.sort(key=lambda c: c["fused_score"], reverse=True)
+            head = candidates[:rerank_cap]
+            tail = candidates[rerank_cap:]
+            head = self.reranker.rerank(query, head)
             # 重排分归一化后并入融合分（七三开），保留融合分的可解释性
-            rr = _minmax([c.get("rerank_score", 0.0) for c in candidates])
-            for c, r in zip(candidates, rr):
+            rr = _minmax([c.get("rerank_score", 0.0) for c in head])
+            for c, r in zip(head, rr):
                 c["fused_score"] = 0.3 * c["fused_score"] + 0.7 * r
+            candidates = head + tail
         candidates.sort(key=lambda c: c["fused_score"], reverse=True)
 
         # 6) 阈值过滤 + 截断
