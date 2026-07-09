@@ -41,17 +41,19 @@
 
 ```
 shader_agent/
-  config/        配置入口，集中管理 LLM、检索、记忆等参数
+  config/        配置入口，集中管理 LLM、检索、记忆、可观测性等参数
   llm/           DeepSeek 客户端与 llm_fn 装配
   corpus/        知识库：模型、清洗、打标、静态分析、分块、向量库、关键词库、父文档库、混合检索、重排
   embeddings/    本地嵌入模型封装
   agents/        Role、Action、工作记忆（WorkingMemory）、Analyzer、Generator、Orchestrator
+  observability/ Langfuse 可观测性：tracing 客户端、span 辅助
   rendering/     headless GLSL 编译与渲染
   ui/            Gradio 三标签页界面与运行装配
   utils/         日志等工具
 scripts/         建库、下载嵌入模型、各模块验证脚本、UI 启动
 tests/           离线单元测试
 config.yaml      非敏感配置
+.env.example     环境变量模板
 requirements.txt 依赖清单
 ```
 
@@ -108,9 +110,39 @@ python -m scripts.run_ui
 所有这些权重、阈值与开关都集中在 config.yaml 的 retrieval 段，可不改代码直接调参。
 
 
+## 可观测性（Langfuse）
+
+本项目通过 Langfuse 对每次任务生成完整 trace 链路：
+
+```
+一次生成请求
+├── root span: 整个任务耗时
+│   ├── span: 混合检索（记录融合分四路分量）
+│   ├── span: DraftCode 起草
+│   ├── span: CompileFix 编译修正
+│   └── generation: LLM 调用（自动记录 token/延迟/成本）
+```
+
+每次 Action 执行、检索调用和 LLM 请求都会自动记录。未安装 Langfuse 或未配置密钥时全链路自动降级为 no-op，不影响现有功能。
+
+配置方式（可选，不填则 no-op）：
+
+```bash
+# 在 .env 中填入
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://us.cloud.langfuse.com
+```
+
+验证链路：
+
+```bash
+python -m scripts.verify_observability --dry-run
+```
+
 ## 配置要点
 
-config.yaml 集中管理非敏感配置。llm 段配置对话与代码模型、生成参数与重试。corpus 段配置数据源与清洗阈值。embedding 段配置本地嵌入模型。vector_store 段配置集合名与距离度量。retrieval 段配置混合检索的召回规模、融合权重、阈值与重排开关。memory 段配置记忆数据库路径、集合名、晋升门槛、注入上限与经验排序权重。
+config.yaml 集中管理非敏感配置。llm 段配置对话与代码模型、生成参数与重试。corpus 段配置数据源与清洗阈值。embedding 段配置本地嵌入模型。vector_store 段配置集合名与距离度量。retrieval 段配置混合检索的召回规模、融合权重、阈值与重排开关。observability 段配置 tracing 开关与环境标签。
 
 敏感字段如 API key 放在 .env，不进版本库。
 

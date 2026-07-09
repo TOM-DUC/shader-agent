@@ -46,5 +46,16 @@ pytest>=8.2.0
 pytest-asyncio>=0.23.0
 pytest-rerunfailures>=14.0   # 给 v4-pro 偶发抖动的 chat_smoke 用 --reruns
 
+# === 可观测性：Langfuse tracing ===
+# v3 基于 OpenTelemetry；提供 OpenAI drop-in 包装，自动记录 token/延迟/成本。
+# 未安装或未配置 LANGFUSE_PUBLIC_KEY 时，全链路自动降级为 no-op。
+langfuse>=3.0.0
+# 并行子任务的 trace 上下文传播（langfuse 会带上，这里显式钉住）
+opentelemetry-api>=1.25.0
+
+# === 离线评估：DeepEval ===
+# LLM-as-a-judge（GEval）+ 自定义确定性指标。评审模型复用项目自带的 DeepSeek 客户端。
+deepeval>=2.0.0
+
 # === Gradio UI ===
 gradio>=4.40,<5.0          # Blocks API + gr.Code(language=...) + gr.Examples

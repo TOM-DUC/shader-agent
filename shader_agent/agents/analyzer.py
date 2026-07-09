@@ -40,6 +40,7 @@ from shader_agent.agents.schemas import (
     Message,
     SimilarShader,
 )
+from shader_agent.observability import bind_current_context
 from shader_agent.utils.logger import logger
 
 
@@ -209,14 +210,17 @@ class ShaderAnalyzer(Role):
     ) -> tuple[ExplainShaderOut, str]:
         from concurrent.futures import ThreadPoolExecutor
 
+        # bind_current_context：把当前 OTel 追踪上下文带进 worker 线程，
+        # 使并行子任务的 span/generation 正确挂到父 trace（未启用时为恒等包装）。
+        run_action_ctx = bind_current_context(self.run_action)
         with ThreadPoolExecutor(max_workers=2) as ex:
             # Round 1: walkthrough ∥ summary（summary 先不带 walkthrough 上下文）
             f_wk = ex.submit(
-                self.run_action, "walkthrough",
+                run_action_ctx, "walkthrough",
                 WalkthroughIn(code=code, parse_result=parse_out),
             )
             f_sum = ex.submit(
-                self.run_action, "summary",
+                run_action_ctx, "summary",
                 SummaryIn(code=code, parse_result=parse_out, walkthrough={}),
             )
             r_wk = f_wk.result()
@@ -233,11 +237,11 @@ class ShaderAnalyzer(Role):
         with ThreadPoolExecutor(max_workers=2) as ex:
             # Round 2: effect ∥ compare（都只依赖 summary）
             f_ef = ex.submit(
-                self.run_action, "effect_infer",
+                run_action_ctx, "effect_infer",
                 EffectInferIn(code=code, parse_result=parse_out, summary=summary),
             )
             f_cm = ex.submit(
-                self.run_action, "compare",
+                run_action_ctx, "compare",
                 CompareIn(code=code, summary=summary, similar=similar),
             )
             r_ef = f_ef.result()

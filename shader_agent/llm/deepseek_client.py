@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from typing import Any, Generator, Iterable
 
-from openai import OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from tenacity import (
     retry,
@@ -22,14 +21,37 @@ from tenacity import (
 )
 
 from shader_agent.config.settings import settings
+from shader_agent.observability import get_openai_class, langfuse_openai_active
 from shader_agent.utils.logger import logger
 
 
+def _lf_kwargs(name: str) -> dict[str, Any]:
+    """仅当底层 OpenAI 客户端是 langfuse 包装版时，才注入 name 等专用 kwargs。
+
+    langfuse 的 drop-in OpenAI 会消费 `name`（作为 generation 名字）并在上报前剥除；
+    原生 OpenAI 不接受该 kwarg，因此这里做条件透传，保证两种后端都不报错。
+    """
+    if langfuse_openai_active():
+        return {"name": name}
+    return {}
+
+
 class DeepSeekClient:
-    """对 OpenAI SDK 的薄封装，专门指向 DeepSeek。"""
+    """对 OpenAI SDK 的薄封装，专门指向 DeepSeek。
+
+    可观测性：当安装并启用 Langfuse 时，底层 OpenAI 客户端会被替换为
+    `langfuse.openai.OpenAI`，从而把每一次 chat.completions 调用自动记录为一条
+    generation（携带 model / prompt / completion / token 用量 / 延迟 / 成本）。
+    未安装或未配置 Langfuse 时，自动退回原生 `openai.OpenAI`，行为完全不变。
+    """
 
     def __init__(self) -> None:
-        self._client = OpenAI(
+        openai_cls, _ = get_openai_class()
+        if openai_cls is None:
+            raise ImportError(
+                "未找到 openai 包。请先安装依赖：pip install -r requirements.txt"
+            )
+        self._client = openai_cls(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
             timeout=settings.llm.timeout_seconds,
@@ -59,14 +81,17 @@ class DeepSeekClient:
     ) -> str:
         """普通对话，返回文本。"""
 
+        _model = model or self.cfg.chat_model
+
         @self._retry
         def _call() -> ChatCompletion:
             return self._client.chat.completions.create(
-                model=model or self.cfg.chat_model,
+                model=_model,
                 messages=messages,
                 temperature=temperature if temperature is not None else self.cfg.temperature,
                 max_tokens=max_tokens or self.cfg.max_tokens,
                 top_p=self.cfg.top_p,
+                **_lf_kwargs(f"deepseek.chat[{_model}]"),
                 **kwargs,
             )
 
@@ -103,13 +128,15 @@ class DeepSeekClient:
         **kwargs: Any,
     ) -> Generator[str, None, None]:
         """流式输出，逐 token yield。"""
+        _model = model or self.cfg.chat_model
         stream: Iterable[ChatCompletionChunk] = self._client.chat.completions.create(
-            model=model or self.cfg.chat_model,
+            model=_model,
             messages=messages,
             temperature=temperature if temperature is not None else self.cfg.temperature,
             max_tokens=self.cfg.max_tokens,
             top_p=self.cfg.top_p,
             stream=True,
+            **_lf_kwargs(f"deepseek.stream[{_model}]"),
             **kwargs,
         )
         for chunk in stream:
@@ -144,15 +171,18 @@ class DeepSeekClient:
             ]
         """
 
+        _model = model or self.cfg.chat_model
+
         @self._retry
         def _call() -> ChatCompletion:
             return self._client.chat.completions.create(
-                model=model or self.cfg.chat_model,
+                model=_model,
                 messages=messages,
                 tools=tools,
                 tool_choice=tool_choice,
                 temperature=self.cfg.temperature,
                 max_tokens=self.cfg.max_tokens,
+                **_lf_kwargs(f"deepseek.tools[{_model}]"),
                 **kwargs,
             )
 

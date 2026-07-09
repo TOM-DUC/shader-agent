@@ -22,7 +22,26 @@ from shader_agent.agents.schemas import (
     GenerationSpec,
     Message,
 )
+from shader_agent.config.settings import settings
+from shader_agent.observability import trace_span, update_current_trace
 from shader_agent.utils.logger import logger
+
+
+def _trace_attrs(task: str) -> dict:
+    """构造 trace 级属性：服务名、环境、任务名、标签。"""
+    obs = settings.observability
+    tags = list(obs.tags or [])
+    if task not in tags:
+        tags.append(task)
+    return {
+        "name": f"orchestrator.{task}",
+        "tags": tags,
+        "metadata": {
+            "service": obs.service_name,
+            "environment": obs.environment,
+            "framework": settings.orchestration.framework,
+        },
+    }
 
 
 class Orchestrator:
@@ -39,28 +58,47 @@ class Orchestrator:
     # ---------- 任务 1：仅分析 ----------
     def analyze_only(self, code: str) -> dict[str, Any]:
         t0 = time.perf_counter()
-        in_msg = Message(role="user", content=code, payload={"code": code})
-        out = self.analyzer.handle(in_msg)
-        report = AnalysisReport(**out.payload) if out.payload_type == AnalysisReport.PAYLOAD_TYPE else None
-        return {
-            "task": "analyze_only",
-            "elapsed_ms": (time.perf_counter() - t0) * 1000.0,
-            "report": report,
-            "messages": [in_msg, out],
-        }
+        with trace_span("task.analyze_only", input={"code_len": len(code or "")}) as span:
+            update_current_trace(**_trace_attrs("analyze_only"))
+            in_msg = Message(role="user", content=code, payload={"code": code})
+            out = self.analyzer.handle(in_msg)
+            report = AnalysisReport(**out.payload) if out.payload_type == AnalysisReport.PAYLOAD_TYPE else None
+            elapsed = (time.perf_counter() - t0) * 1000.0
+            span.update(
+                output={"techniques": (report.techniques if report else []),
+                        "n_similar": len(report.similar_shaders) if report else 0},
+                metadata={"elapsed_ms": round(elapsed, 1), "ok": report is not None},
+            )
+            return {
+                "task": "analyze_only",
+                "elapsed_ms": elapsed,
+                "report": report,
+                "messages": [in_msg, out],
+            }
 
     # ---------- 任务 2：仅生成 ----------
     def generate_only(self, user_text: str) -> dict[str, Any]:
         t0 = time.perf_counter()
-        in_msg = Message(role="user", content=user_text)
-        out = self.generator.handle(in_msg)
-        gen = GeneratedShader(**out.payload) if out.payload_type == GeneratedShader.PAYLOAD_TYPE else None
-        return {
-            "task": "generate_only",
-            "elapsed_ms": (time.perf_counter() - t0) * 1000.0,
-            "generated": gen,
-            "messages": [in_msg, out],
-        }
+        with trace_span("task.generate_only", input={"prompt": (user_text or "")[:500]}) as span:
+            update_current_trace(**_trace_attrs("generate_only"))
+            in_msg = Message(role="user", content=user_text)
+            out = self.generator.handle(in_msg)
+            gen = GeneratedShader(**out.payload) if out.payload_type == GeneratedShader.PAYLOAD_TYPE else None
+            elapsed = (time.perf_counter() - t0) * 1000.0
+            span.update(
+                output={
+                    "compile_ok": bool(gen.compile_result.ok) if gen else False,
+                    "iterations": gen.iterations if gen else 0,
+                    "critique_score": gen.self_critique_score if gen else 0.0,
+                },
+                metadata={"elapsed_ms": round(elapsed, 1), "ok": gen is not None},
+            )
+            return {
+                "task": "generate_only",
+                "elapsed_ms": elapsed,
+                "generated": gen,
+                "messages": [in_msg, out],
+            }
 
     # ---------- 任务 3：基于原代码改写（Remix） ----------
     def analyze_then_generate(
@@ -85,6 +123,12 @@ class Orchestrator:
         「改写(1~N次LLM)」，端到端时间大幅下降。
         """
         t0 = time.perf_counter()
+        _span_cm = trace_span(
+            "task.analyze_then_generate",
+            input={"code_len": len(code or ""), "ask": (ask or "")[:300]},
+        )
+        _span = _span_cm.__enter__()
+        update_current_trace(**_trace_attrs("analyze_then_generate"))
 
         report: AnalysisReport | None = None
         in1 = Message(role="user", content=code, payload={"code": code})
@@ -118,6 +162,15 @@ class Orchestrator:
             f"[orch] remix done in {elapsed:.1f}ms "
             f"(analyze_first={analyze_first}, generator mem={len(self.generator.memory)})"
         )
+        _span.update(
+            output={
+                "compile_ok": bool(gen.compile_result.ok) if gen else False,
+                "iterations": gen.iterations if gen else 0,
+            },
+            metadata={"elapsed_ms": round(elapsed, 1),
+                      "analyze_first": analyze_first, "ok": gen is not None},
+        )
+        _span_cm.__exit__(None, None, None)
         return {
             "task": "analyze_then_generate",
             "elapsed_ms": elapsed,

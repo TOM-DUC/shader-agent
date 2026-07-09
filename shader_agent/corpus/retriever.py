@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from shader_agent.config.settings import settings
+from shader_agent.observability import trace_span
 from shader_agent.utils.logger import logger
 
 
@@ -184,10 +185,35 @@ class HybridRetriever:
         if not query or not query.strip():
             return []
 
-        # 子块级混合检索可用时走父子分块；否则降级 shader 级
-        if self._chunks_available():
-            return self._retrieve_hybrid(query, top_k, want_tags or [])
-        return self._retrieve_legacy(query, top_k, want_tags or [])
+        with trace_span(
+            "retrieval",
+            input={"query": query[:300], "top_k": top_k, "want_tags": want_tags or []},
+        ) as span:
+            # 子块级混合检索可用时走父子分块；否则降级 shader 级
+            mode = "hybrid" if self._chunks_available() else "legacy"
+            if mode == "hybrid":
+                hits = self._retrieve_hybrid(query, top_k, want_tags or [])
+            else:
+                hits = self._retrieve_legacy(query, top_k, want_tags or [])
+            # 记录命中构成：便于在 Langfuse 里直接看每次检索的相关性与融合分拆解
+            span.update(
+                output=[
+                    {
+                        "shader_id": h.shader_id,
+                        "name": h.name,
+                        "fused_score": h.fused_score,
+                        "vec_rel": h.vec_rel,
+                        "bm25_norm": h.bm25_norm,
+                        "tag_match": h.tag_match,
+                        "quality": h.quality,
+                        "matched_chunks": h.matched_chunks[:6],
+                    }
+                    for h in hits
+                ],
+                metadata={"mode": mode, "n_hits": len(hits),
+                          "min_score": self.min_score, "use_rerank": self.use_rerank},
+            )
+            return hits
 
     def _chunks_available(self) -> bool:
         try:

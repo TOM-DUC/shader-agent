@@ -27,6 +27,12 @@ from shader_agent.agents.schemas import (
     Message,
 )
 from shader_agent.config.settings import settings
+from shader_agent.observability import (
+    get_current_trace_id,
+    is_enabled as lf_enabled,
+    trace_span,
+    update_current_trace,
+)
 from shader_agent.utils.logger import logger
 
 
@@ -242,6 +248,15 @@ def get_assembly(opts: AssemblyOptions) -> _Assembly:
     # 3. 渲染后端
     compiler, renderer, backend_label = _build_render_backend(opts.render_backend)
     diag.append("渲染后端: " + backend_label)
+
+    # 3b. 可观测性状态（便于 UI 状态栏一眼看出 tracing 是否生效）
+    if lf_enabled():
+        diag.append(
+            f"可观测性: Langfuse 已启用 "
+            f"(env={settings.observability.environment})"
+        )
+    else:
+        diag.append("可观测性: 未启用（未装 langfuse 或未配置 LANGFUSE_PUBLIC_KEY）")
 
     # 4. 装配 Analyzer
     analyzer = ShaderAnalyzer(
@@ -469,7 +484,7 @@ def run_generate(user_text: str, opts: AssemblyOptions,
         "compile_ok": False, "compile_errors": "",
         "iterations": 0, "critique": "",
         "image": None, "elapsed_ms": 0.0,
-        "diagnostics": [], "references": [],
+        "diagnostics": [], "references": [], "trace_id": "",
     }
     if not user_text or not user_text.strip():
         out["error"] = "请输入需求"
@@ -477,19 +492,33 @@ def run_generate(user_text: str, opts: AssemblyOptions,
     try:
         asm = get_assembly(opts)
         out["diagnostics"] = list(asm.diagnostics)
-        # 用 spec 直接喂 generator，比让 ParseSpec 二次解析更精确，
-        # 同时把 UI 控件值带进去。
-        spec = GenerationSpec(
-            description=user_text,
-            palette=palette,
-            complexity=complexity or "simple",  # type: ignore[arg-type]
-            dynamic=dynamic,
-        )
-        msg_out = asm.generator.handle(spec.to_message())
-        if msg_out.payload_type != GeneratedShader.PAYLOAD_TYPE:
-            out["error"] = f"Generator 返回非预期消息: {msg_out.content[:120]}"
-            return out
-        g = GeneratedShader(**msg_out.payload)
+        # run_generate 直接调 generator（不过 orchestrator），因此在这里开根 span，
+        # 保证 UI 侧的生成任务同样有完整 trace。
+        with trace_span("task.ui_generate",
+                        input={"prompt": user_text[:500], "palette": palette,
+                               "complexity": complexity, "dynamic": dynamic}) as span:
+            update_current_trace(
+                name="ui.generate",
+                tags=list(settings.observability.tags or []) + ["ui", "generate"],
+                metadata={"service": settings.observability.service_name,
+                          "environment": settings.observability.environment},
+            )
+            out["trace_id"] = get_current_trace_id() or ""
+            # 用 spec 直接喂 generator，比让 ParseSpec 二次解析更精确，
+            # 同时把 UI 控件值带进去。
+            spec = GenerationSpec(
+                description=user_text,
+                palette=palette,
+                complexity=complexity or "simple",  # type: ignore[arg-type]
+                dynamic=dynamic,
+            )
+            msg_out = asm.generator.handle(spec.to_message())
+            if msg_out.payload_type != GeneratedShader.PAYLOAD_TYPE:
+                out["error"] = f"Generator 返回非预期消息: {msg_out.content[:120]}"
+                return out
+            g = GeneratedShader(**msg_out.payload)
+            span.update(output={"compile_ok": bool(g.compile_result.ok),
+                                "iterations": g.iterations})
         out["code"] = g.code
         out["explanation"] = g.explanation
         out["compile_ok"] = bool(g.compile_result.ok)

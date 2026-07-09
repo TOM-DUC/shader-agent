@@ -92,6 +92,35 @@ class RetrievalConfig(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
 
 
+class ObservabilityConfig(BaseSettings):
+    """可观测性（Langfuse）配置。非敏感开关放这里；密钥放 .env。
+
+    enabled 三态：
+      - "auto" : 检测到 LANGFUSE_PUBLIC_KEY 即启用（默认）。
+      - "on"   : 只要装了 langfuse 就启用（缺密钥时 SDK 本地 no-op，不外发）。
+      - "off"  : 强制关闭，走原生 OpenAI，无任何 langfuse 副作用。
+    """
+    enabled: Literal["auto", "on", "off"] = "auto"
+    service_name: str = "shader-agent"      # 服务名（写入 trace metadata）
+    environment: str = "dev"                # 环境标（dev/staging/prod）
+    trace_llm_io: bool = True               # 是否记录 LLM 输入输出正文
+    tags: list[str] = []                    # 附加在每条 trace 上的标签
+
+
+class EvaluationConfig(BaseSettings):
+    """离线评估（DeepEval）配置。
+
+    judge_model 为空时用 llm.chat_model 作为 LLM-as-a-judge 的评审模型。
+    评估复用项目现有的 DeepSeek 客户端，无需额外的评审 API key。
+    """
+    judge_model: str = ""                   # 评审模型；空=用 llm.chat_model
+    judge_temperature: float = 0.0
+    push_scores_to_langfuse: bool = True    # 评估分数是否回流到 Langfuse
+    threshold_generation: float = 0.6       # 生成质量通过门槛
+    threshold_retrieval: float = 0.5        # 检索相关性通过门槛
+    threshold_analysis: float = 0.6         # 分析忠实度通过门槛
+
+
 
 
 class Settings(BaseSettings):
@@ -116,6 +145,14 @@ class Settings(BaseSettings):
     # 允许为空字符串（无 key 时走 seed 流程）
     shadertoy_api_key: str = Field(default="", alias="SHADERTOY_API_KEY")
 
+    # Langfuse 敏感字段（来自 .env；缺失时可观测性自动降级为 no-op）
+    langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        alias="LANGFUSE_HOST",
+    )
+
     # 嵌套配置（来自 config.yaml）
     llm: LLMConfig = LLMConfig()
     orchestration: OrchestrationConfig = OrchestrationConfig()
@@ -125,6 +162,8 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig = EmbeddingConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
+    observability: ObservabilityConfig = ObservabilityConfig()
+    evaluation: EvaluationConfig = EvaluationConfig()
 
     # 项目根
     project_root: Path = PROJECT_ROOT
@@ -164,6 +203,8 @@ class Settings(BaseSettings):
         embedding = EmbeddingConfig(**(yaml_data.get("embedding") or {}))
         vstore = VectorStoreConfig(**(yaml_data.get("vector_store") or {}))
         retrieval = RetrievalConfig(**(yaml_data.get("retrieval") or {}))
+        observability = ObservabilityConfig(**(yaml_data.get("observability") or {}))
+        evaluation = EvaluationConfig(**(yaml_data.get("evaluation") or {}))
 
         return cls(
             llm=llm,
@@ -174,6 +215,8 @@ class Settings(BaseSettings):
             embedding=embedding,
             vector_store=vstore,
             retrieval=retrieval,
+            observability=observability,
+            evaluation=evaluation,
         )
 
 

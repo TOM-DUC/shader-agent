@@ -101,3 +101,29 @@ retrieval:
   # 不会拖慢首屏；显存不足或权重缺失会自动回退到启发式排序，不影响可用性。
   use_rerank: true
   reranker_model: "BAAI/bge-reranker-v2-m3"
+
+# === 可观测性（Langfuse tracing）===
+# 密钥放 .env：LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
+# 未安装 langfuse 或未配置密钥时，全链路自动降级为 no-op，不影响现有运行。
+observability:
+  # auto = 检测到 LANGFUSE_PUBLIC_KEY 即启用；on = 装了就开；off = 强制关闭
+  enabled: "auto"
+  service_name: "shader-agent"
+  environment: "dev"
+  # 是否记录 LLM 的输入输出正文（关闭可减少上报体积/规避敏感内容）
+  trace_llm_io: true
+  tags:
+    - "shader-agent"
+
+# === 离线评估（DeepEval）===
+# 复用项目现有 DeepSeek 客户端作为 LLM-as-a-judge，无需额外评审 API key。
+evaluation:
+  # 评审模型；留空则用 llm.chat_model
+  judge_model: ""
+  judge_temperature: 0.0
+  # 评估分数是否回流写入 Langfuse（便于在同一看板对比质量与耗时）
+  push_scores_to_langfuse: true
+  # 各任务的通过门槛（0~1）
+  threshold_generation: 0.6
+  threshold_retrieval: 0.5
+  threshold_analysis: 0.6

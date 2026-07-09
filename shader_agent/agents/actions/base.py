@@ -18,7 +18,28 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
+from shader_agent.observability import trace_span
 from shader_agent.utils.logger import logger
+
+
+def _brief(obj: Any, limit: int = 400) -> Any:
+    """把 Action 输入压成可读且不过长的 span 输入摘要。"""
+    try:
+        if isinstance(obj, BaseModel):
+            data = obj.model_dump()
+        elif isinstance(obj, dict):
+            data = dict(obj)
+        else:
+            return str(obj)[:limit]
+        out: dict[str, Any] = {}
+        for k, v in data.items():
+            s = v if isinstance(v, (int, float, bool)) else str(v)
+            if isinstance(s, str) and len(s) > limit:
+                s = s[:limit] + "…"
+            out[k] = s
+        return out
+    except Exception:
+        return str(obj)[:limit]
 
 
 # 输入 / 输出 类型变量
@@ -71,42 +92,52 @@ class Action(ABC, Generic[TIn, TOut]):
     # ---------- 公共入口 ----------
     def run(self, inp: TIn) -> ActionResult[TOut]:
         t0 = time.perf_counter()
-        try:
-            if self.input_schema is not None and not isinstance(inp, self.input_schema):
-                # 允许接收 dict，自动包装
-                if isinstance(inp, dict):
-                    inp = self.input_schema(**inp)  # type: ignore[arg-type]
-                else:
-                    raise TypeError(
-                        f"{self.name}: expected {self.input_schema.__name__}, "
-                        f"got {type(inp).__name__}"
+        # 每个 Action 作为一个 span；未启用 Langfuse 时是 no-op，无额外开销
+        with trace_span(f"action.{self.name}", input=_brief(inp)) as span:
+            try:
+                if self.input_schema is not None and not isinstance(inp, self.input_schema):
+                    # 允许接收 dict，自动包装
+                    if isinstance(inp, dict):
+                        inp = self.input_schema(**inp)  # type: ignore[arg-type]
+                    else:
+                        raise TypeError(
+                            f"{self.name}: expected {self.input_schema.__name__}, "
+                            f"got {type(inp).__name__}"
+                        )
+                out = self._run(inp)
+                elapsed = (time.perf_counter() - t0) * 1000.0
+                logger.info(f"[action] {self.name} ok in {elapsed:.1f}ms")
+                span.update(
+                    output=_brief(out),
+                    metadata={"ok": True, "elapsed_ms": round(elapsed, 1)},
+                )
+                return ActionResult(
+                    ok=True,
+                    action=self.name,
+                    data=out,
+                    elapsed_ms=elapsed,
+                )
+            except Exception as e:
+                elapsed = (time.perf_counter() - t0) * 1000.0
+                logger.exception(f"[action] {self.name} failed: {e}")
+                span.update(
+                    metadata={"ok": False, "elapsed_ms": round(elapsed, 1),
+                              "error": f"{type(e).__name__}: {e}"},
+                )
+                if self.critical:
+                    # critical 失败也返回 result（不抛出），由 Role 决定是否中断
+                    return ActionResult(
+                        ok=False,
+                        action=self.name,
+                        error=f"{type(e).__name__}: {e}",
+                        elapsed_ms=elapsed,
                     )
-            out = self._run(inp)
-            elapsed = (time.perf_counter() - t0) * 1000.0
-            logger.info(f"[action] {self.name} ok in {elapsed:.1f}ms")
-            return ActionResult(
-                ok=True,
-                action=self.name,
-                data=out,
-                elapsed_ms=elapsed,
-            )
-        except Exception as e:
-            elapsed = (time.perf_counter() - t0) * 1000.0
-            logger.exception(f"[action] {self.name} failed: {e}")
-            if self.critical:
-                # critical 失败也返回 result（不抛出），由 Role 决定是否中断
                 return ActionResult(
                     ok=False,
                     action=self.name,
-                    error=f"{type(e).__name__}: {e}",
+                    error=str(e),
                     elapsed_ms=elapsed,
                 )
-            return ActionResult(
-                ok=False,
-                action=self.name,
-                error=str(e),
-                elapsed_ms=elapsed,
-            )
 
     # ---------- 辅助 ----------
     def dep(self, key: str, default: Any = None) -> Any:
