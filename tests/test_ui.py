@@ -17,6 +17,12 @@ from pathlib import Path
 
 import pytest
 
+# CI 的 requirements-ci.txt 刻意不含 gradio（test profile 不需要它）。
+# 缺依赖时跳过整个模块而不是 collection 阶段 RuntimeError——
+# `from shader_agent.ui import runners` 会经 __init__ 导入 app.py，
+# 而 app.py 在 import 期就要求 gradio 可用。
+pytest.importorskip("gradio")
+
 from shader_agent.ui import runners as rn
 
 
