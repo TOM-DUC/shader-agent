@@ -1,0 +1,158 @@
+name: quality
+
+# 分层触发：
+#   - PR / push        → 冒烟 + 全量接口测试（进程内 test profile，无需 key/GPU）
+#   - 每日定时          → 追加压测与真 GL 用例
+# 目的是让"提交 5 分钟内知道有没有坏"，把慢而全的验证放到 nightly。
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  schedule:
+    - cron: "0 18 * * *"   # UTC 18:00 ≈ 北京时间 02:00
+  workflow_dispatch:
+
+env:
+  SHADER_AGENT_PROFILE: test
+  SHADER_AGENT_LLM_CACHE: "0"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  # ---------------------------------------------------------
+  # 1) 冒烟：最快反馈，失败即中断后续 job
+  # ---------------------------------------------------------
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements-ci.txt -r requirements-api.txt -r requirements-test.txt
+      - name: 配置层守护用例
+        # 放在最前面：它不依赖服务也不依赖 key，一旦红了说明是环境/配置问题，
+        # 后面几十条接口用例就不必再跑一遍来重复报同一个根因。
+        run: pytest tests -m config -q --timeout=60
+
+      - name: 冒烟用例
+        run: pytest tests_api -m smoke -q --timeout=120
+
+  # ---------------------------------------------------------
+  # 2) 全量接口测试 + 覆盖率 + Allure 结果
+  # ---------------------------------------------------------
+  api-tests:
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: 安装依赖
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements-ci.txt -r requirements-api.txt -r requirements-test.txt
+
+      - name: 接口自动化（并行 + 有限重试）
+        run: |
+          pytest tests_api \
+            -m "not gpu and not live" \
+            -n auto --dist loadfile \
+            --reruns 1 --reruns-delay 2 \
+            --timeout=300 \
+            --alluredir=reports/allure-results \
+            --junitxml=reports/junit.xml \
+            --cov=shader_agent --cov-report=xml:reports/coverage.xml \
+            --cov-report=term-missing
+
+      - name: 归档失败产物与报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-py${{ matrix.python-version }}
+          path: |
+            reports/
+            logs/
+          retention-days: 14
+
+      - name: 上报覆盖率
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: reports/coverage.xml
+        continue-on-error: true
+
+  # ---------------------------------------------------------
+  # 3) 生成并发布 Allure 报告（只在主干）
+  # ---------------------------------------------------------
+  allure-report:
+    needs: api-tests
+    if: github.ref == 'refs/heads/main' && always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-artifacts-py3.12
+          path: downloaded
+      - name: 生成 Allure 报告
+        uses: simple-elf/allure-report-action@master
+        with:
+          allure_results: downloaded/allure-results
+          allure_history: allure-history
+        continue-on-error: true
+      - name: 发布到 GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: allure-history
+        continue-on-error: true
+
+  # ---------------------------------------------------------
+  # 4) 性能基线（nightly）：起真实服务后压测，带阈值门禁
+  # ---------------------------------------------------------
+  perf:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements-ci.txt -r requirements-api.txt -r requirements-test.txt
+      - name: 启动服务
+        run: |
+          uvicorn shader_agent.api.main:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/healthz && break
+            sleep 1
+          done
+      - name: 压测（失败率 >2% 或 P95 >5s 即判红）
+        run: |
+          mkdir -p reports/perf
+          locust -f tests_api/perf/locustfile.py \
+                 --host http://127.0.0.1:8000 \
+                 --headless -u 20 -r 5 -t 2m \
+                 --csv=reports/perf/shader
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-report
+          path: reports/perf/

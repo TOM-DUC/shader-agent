@@ -1,0 +1,27 @@
+# 覆盖率配置。独立成 .coveragerc 的理由同 pytest.ini：让本包对既有文件纯新增。
+# coverage.py 按 .coveragerc → setup.cfg → tox.ini → pyproject.toml 的顺序取第一份，
+# 因此本文件存在时会覆盖 pyproject.toml 里的 [tool.coverage] 段。
+
+[run]
+source = shader_agent
+# 分母里排除掉"不该被测"的部分，否则覆盖率数字会被稀释成一个没有指导意义的值：
+#   ui/styling.py        纯 CSS 字符串常量
+#   corpus/seed_shaders  内嵌数据
+#   testing/*            测试替身本身，它们是工具不是被测对象
+omit =
+    shader_agent/ui/styling.py
+    shader_agent/corpus/seed_shaders.py
+    shader_agent/testing/*
+    */__pycache__/*
+
+[report]
+show_missing = True
+skip_empty = True
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == .__main__.:
+
+[html]
+directory = reports/htmlcov

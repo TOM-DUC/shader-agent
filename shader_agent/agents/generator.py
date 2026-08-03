@@ -136,10 +136,31 @@ class ShaderGenerator(Role):
                     prev_errors=prev_errors,
                 ),
             )
-            iterations = i + 1
             if not r3.ok or r3.data is None:
-                logger.warning(f"[generator] draft failed: {r3.error}")
+                # draft 失败说明 LLM 链路有问题（超时/限流/鉴权/非法输出）。
+                # 按轮次分流，两种失败的正确处置不同：
+                #
+                # · 首轮失败：什么都没产出。不能静默降级成"空代码成品"——否则
+                #   接口层拿到的是一份 code="" 的成功响应，用户以为成功了，
+                #   实际什么都没有。把原始错误原样抛出，由 service 层的
+                #   classify_upstream_error 归类成可操作的错误码
+                #   （50401/42901/50301 等）。
+                # · 修正轮失败：手里已经有一份（编不过的）代码。整体报错等于把
+                #   它一起扔掉，而"如实返回 compile_ok=false + 错误原文"本来就是
+                #   这个系统对反复修复失败时的既定契约，没有理由因为失败发生在
+                #   LLM 侧而不是编译器侧就换一套行为。
+                logger.warning(f"[generator] draft failed (round {i + 1}): {r3.error}")
+                if i == 0 or not final_code:
+                    raise RuntimeError(r3.error) from None
+                compile_result = CompileResult(
+                    ok=False,
+                    errors=(f"{compile_result.errors or ''}\n"
+                            f"[fix-round aborted] {r3.error}").strip(),
+                )
                 break
+            # 轮次计数放在成功之后：中止轮没有产出，计进去会让 iterations 虚高，
+            # 而这个字段是要进指标看板的。
+            iterations = i + 1
             draft = r3.data
             if i == 0 and draft.explanation:
                 design_explain = draft.explanation

@@ -1,0 +1,16 @@
+# === CI 最小运行时依赖（test profile）===
+#
+# 刻意不用项目的 requirements.txt：那里面有 torch / chromadb /
+# sentence-transformers 等重量级依赖，装一次好几分钟，而 test profile 下
+# 大模型、编译器、渲染器、检索器全部是确定性替身，一个都用不到。
+#
+# 抽成单独文件是因为原先这份清单在 workflow 里被硬编码了三遍，
+# 加一个依赖就得改三处——迟早漏掉一处，表现为某个 job 莫名 ImportError。
+
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+python-dotenv>=1.0.0          # settings 读 .env；缺失时会降级为只读环境变量
+pyyaml>=6.0
+loguru>=0.7.0
+numpy>=1.26.0                 # testing/fake_render 的确定性软件渲染
+pillow>=10.0.0                # 图像层校验（解码 PNG、取像素统计）
