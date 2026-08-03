@@ -2,11 +2,6 @@
 import os
 import pytest
 
-# CI 的 requirements-ci.txt 刻意不含 openai（test profile 用确定性桩）。
-# 缺依赖时跳过整个模块而不是 collection 阶段 ImportError——
-# 否则 `pytest tests -m config` 这种只筛用例的收集也会被它拖垮。
-pytest.importorskip("openai")
-
 from shader_agent.llm.deepseek_client import deepseek
 
 
