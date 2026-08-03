@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "检索接口响应",
+  "type": "object",
+  "required": ["code", "data"],
+  "properties": {
+    "code": {"const": 0},
+    "data": {
+      "type": "object",
+      "required": ["query", "items", "total", "elapsed_ms"],
+      "properties": {
+        "query": {"type": "string"},
+        "total": {"type": "integer", "minimum": 0},
+        "elapsed_ms": {"type": "number", "minimum": 0},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["shader_id", "name", "score", "vec_rel", "bm25",
+                         "tag_match", "quality", "tags", "matched_chunks"],
+            "properties": {
+              "shader_id": {"type": "string", "minLength": 1},
+              "score": {"type": "number", "minimum": 0, "maximum": 1},
+              "vec_rel": {"type": "number"},
+              "bm25": {"type": "number"},
+              "tag_match": {"type": "number"},
+              "quality": {"type": "number"},
+              "tags": {"type": "array", "items": {"type": "string"}},
+              "matched_chunks": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

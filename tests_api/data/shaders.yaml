@@ -1,0 +1,99 @@
+# 公共 GLSL 素材。用例通过 payload_ref 按名引用，避免在每个 YAML 里重复粘代码。
+
+valid_plasma: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+      float d = length(uv);
+      float wave = 0.5 + 0.5 * sin(6.2831 * d * 3.0 - iTime * 1.5);
+      vec3 base = vec3(0.350, 0.600, 0.900);
+      vec3 col = base * wave + 0.06 * base;
+      fragColor = vec4(col, 1.0);
+  }
+
+valid_raymarch: |
+  float sdSphere(vec3 p, float r){ return length(p) - r; }
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+      vec3 ro = vec3(0.0, 0.0, 3.0);
+      vec3 rd = normalize(vec3(uv, -1.5));
+      float t = 0.0;
+      for (int i = 0; i < 64; i++) {
+          float d = sdSphere(ro + rd * t, 1.0);
+          if (d < 0.001) break;
+          t += d;
+          if (t > 20.0) { t = -1.0; break; }
+      }
+      vec3 col = t > 0.0 ? vec3(0.350, 0.650, 0.950) : vec3(0.0);
+      fragColor = vec4(col, 1.0);
+  }
+
+static_shader: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = fragCoord / iResolution.xy;
+      vec3 base = vec3(0.980, 0.420, 0.180);
+      fragColor = vec4(base * uv.y, 1.0);
+  }
+
+# --- 负向素材 ---
+
+broken_type_mismatch: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = fragCoord / iResolution.xy;
+      vec3 col = vec4(uv, 0.5, 1.0);
+      fragColor = vec4(col, 1.0);
+  }
+
+missing_entry: |
+  float noise(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  }
+
+unsupported_ichannel: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = fragCoord / iResolution.xy;
+      vec4 tex = texture(iChannel0, uv);
+      fragColor = vec4(tex.rgb, 1.0);
+  }
+
+custom_uniform: |
+  uniform float uSpeed;
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = fragCoord / iResolution.xy;
+      fragColor = vec4(uv, uSpeed, 1.0);
+  }
+
+fenced_code: |
+  ```glsl
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      fragColor = vec4(1.0);
+  }
+  ```
+
+es3_only_function: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = fragCoord / iResolution.xy;
+      float q = round(uv.x * 10.0);
+      fragColor = vec4(vec3(q * 0.1), 1.0);
+  }
+
+unbalanced_braces: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      vec2 uv = fragCoord / iResolution.xy;
+      fragColor = vec4(uv, 0.0, 1.0);
+
+infinite_loop: |
+  void mainImage( out vec4 fragColor, in vec2 fragCoord )
+  {
+      float t = 0.0;
+      while (true) { t += 0.001; }
+      fragColor = vec4(t);
+  }

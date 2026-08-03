@@ -1,0 +1,75 @@
+# /api/v1/shader/render 的数据驱动用例。
+# 图像内容本身的断言写在 testcases/test_render_api.py 里（需要解码 PNG），
+# 这里覆盖协议层与参数边界。
+
+cases:
+  - id: render_default_size
+    desc: 默认 768x576
+    marks: [smoke]
+    payload_ref: {code: valid_plasma}
+    expect:
+      http: 200
+      code: 0
+      data: {format: "png", width: 768, height: 576}
+      min: {bytes: 1000}
+
+  - id: render_custom_size
+    desc: 自定义分辨率应原样生效
+    payload_ref: {code: valid_plasma}
+    payload: {width: 320, height: 240}
+    expect: {http: 200, code: 0, data: {width: 320, height: 240}}
+
+  - id: render_static_shader
+    desc: 无 iTime 的静态 shader 也应能渲染
+    payload_ref: {code: static_shader}
+    expect: {http: 200, code: 0}
+
+  # ---------- 业务异常 ----------
+  - id: render_unsupported_ichannel
+    desc: 多通道纹理在本地不支持，应返回 40004 而不是 500
+    marks: [smoke]
+    payload_ref: {code: unsupported_ichannel}
+    expect: {http: 422, code: 40004, message_contains: "多通道"}
+
+  - id: render_missing_entry
+    desc: 没有 mainImage 无法编译，应返回 40005
+    payload_ref: {code: missing_entry}
+    expect: {http: 422, code: 40005}
+
+  # ---------- 参数边界 ----------
+  - id: render_min_size
+    desc: 下边界 16x16 应被接受
+    payload_ref: {code: valid_plasma}
+    payload: {width: 16, height: 16}
+    expect: {http: 200, code: 0, data: {width: 16, height: 16}}
+
+  - id: render_below_min_size
+    desc: 低于下边界 1 像素应被拒
+    payload_ref: {code: valid_plasma}
+    payload: {width: 15, height: 16}
+    expect: {http: 422, code: 40001}
+
+  - id: render_max_size
+    desc: 上边界 1920x1080 应被接受
+    marks: [slow]
+    payload_ref: {code: valid_plasma}
+    payload: {width: 1920, height: 1080}
+    expect: {http: 200, code: 0, data: {width: 1920, height: 1080}}
+
+  - id: render_above_max_size
+    desc: 超过上边界应被拒
+    payload_ref: {code: valid_plasma}
+    payload: {width: 1921, height: 1080}
+    expect: {http: 422, code: 40001}
+
+  - id: render_negative_time
+    desc: iTime 为负不合法
+    payload_ref: {code: valid_plasma}
+    payload: {time: -1.0}
+    expect: {http: 422, code: 40001}
+
+  - id: render_zero_time
+    desc: iTime=0 是合法边界值
+    payload_ref: {code: valid_plasma}
+    payload: {time: 0.0}
+    expect: {http: 200, code: 0}

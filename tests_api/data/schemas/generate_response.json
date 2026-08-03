@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "生成接口响应",
+  "type": "object",
+  "required": ["code", "message", "request_id", "elapsed_ms", "data"],
+  "properties": {
+    "code": {"const": 0},
+    "message": {"type": "string"},
+    "request_id": {"type": "string", "minLength": 1},
+    "elapsed_ms": {"type": "number", "minimum": 0},
+    "data": {
+      "type": "object",
+      "required": ["code", "explanation", "compile_ok", "compile_errors",
+                   "iterations", "references", "rule_report", "elapsed_ms"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "explanation": {"type": "string"},
+        "compile_ok": {"type": "boolean"},
+        "compile_errors": {"type": "string"},
+        "iterations": {"type": "integer", "minimum": 0},
+        "self_critique_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "self_critique_rationale": {"type": "string"},
+        "model_used": {"type": "string"},
+        "elapsed_ms": {"type": "number", "minimum": 0},
+        "diagnostics": {"type": "array", "items": {"type": "string"}},
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["shader_id", "name", "distance", "tags"],
+            "properties": {
+              "shader_id": {"type": "string"},
+              "name": {"type": "string"},
+              "distance": {"type": "number"},
+              "tags": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "rule_report": {
+          "type": "object",
+          "required": ["passed", "n_error", "n_warn", "violations"],
+          "properties": {
+            "passed": {"type": "boolean"},
+            "n_error": {"type": "integer", "minimum": 0},
+            "n_warn": {"type": "integer", "minimum": 0},
+            "violations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["rule_id", "level", "message"],
+                "properties": {
+                  "rule_id": {"type": "string", "pattern": "^GLSL[0-9]{3}$"},
+                  "level": {"enum": ["error", "warn"]},
+                  "message": {"type": "string"},
+                  "hint": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "render": {"type": "object"}
+      }
+    }
+  }
+}

@@ -1,0 +1,110 @@
+# /api/v1/shader/validate 的数据驱动用例。
+# 组织方式：正常 / 异常 / 边界 三类，每条都明确写出期望的错误码与规则 ID，
+# 避免"报错就算过"。
+
+cases:
+  # ---------- 正常 ----------
+  - id: valid_plasma_passes
+    desc: 标准同心圆 shader 应全部规则通过
+    marks: [smoke]
+    payload_ref: {code: valid_plasma}
+    expect:
+      http: 200
+      code: 0
+      data: {passed: true, n_error: 0}
+
+  - id: valid_raymarch_passes
+    desc: raymarching 样例应通过
+    payload_ref: {code: valid_raymarch}
+    expect: {http: 200, code: 0, data: {passed: true}}
+
+  # ---------- 规则命中（业务失败但接口成功）----------
+  - id: missing_main_image
+    desc: 缺 mainImage 入口应命中 GLSL010
+    payload_ref: {code: missing_entry}
+    expect:
+      http: 200
+      code: 0
+      data: {passed: false}
+      contains: {violations.0.rule_id: "GLSL010"}
+
+  - id: ichannel_rejected
+    desc: 引用 iChannel0 应命中 GLSL020 且判定不通过
+    marks: [smoke]
+    payload_ref: {code: unsupported_ichannel}
+    expect:
+      http: 200
+      code: 0
+      data: {passed: false}
+      contains: {violations.0.rule_id: "GLSL020"}
+
+  - id: custom_uniform_rejected
+    desc: 自定义 uniform 应命中 GLSL022
+    payload_ref: {code: custom_uniform}
+    expect: {http: 200, code: 0, data: {passed: false}}
+
+  - id: markdown_fence_rejected
+    desc: 残留 markdown 围栏应命中 GLSL030（模型输出未清洗的典型症状）
+    payload_ref: {code: fenced_code}
+    expect: {http: 200, code: 0, data: {passed: false}}
+
+  - id: unbalanced_braces_rejected
+    desc: 花括号不配对应命中 GLSL040
+    payload_ref: {code: unbalanced_braces}
+    expect: {http: 200, code: 0, data: {passed: false}}
+
+  - id: infinite_loop_rejected
+    desc: 无 break 的 while(true) 会挂 GPU，必须判 error
+    payload_ref: {code: infinite_loop}
+    expect: {http: 200, code: 0, data: {passed: false}}
+
+  - id: es3_function_warns
+    desc: round() 在桌面 GL 能编过但 WebGL 1.0 不行，应记 warn 而不阻断
+    payload_ref: {code: es3_only_function}
+    expect:
+      http: 200
+      code: 0
+      data: {passed: true}
+      min: {n_warn: 1}
+
+  - id: dynamic_required_but_static
+    desc: 要求动态但代码无 iTime，应记 warn
+    payload_ref: {code: static_shader}
+    payload: {require_dynamic: true}
+    expect:
+      http: 200
+      code: 0
+      min: {n_warn: 1}
+
+  # ---------- 异常入参 ----------
+  - id: empty_code_rejected
+    desc: 空字符串应被 pydantic 的 min_length 拦下
+    payload: {code: ""}
+    expect: {http: 422, code: 40001}
+
+  - id: missing_code_field
+    desc: 缺必填字段
+    payload: {}
+    expect: {http: 422, code: 40001, message_contains: "code"}
+
+  - id: wrong_type_code
+    desc: code 传数字而非字符串
+    payload: {code: 12345}
+    expect: {http: 422, code: 40001}
+
+  - id: unknown_field_rejected
+    desc: 多传字段必须报错，而不是被静默忽略（防止字段名写错却查不出来）
+    payload: {code: "void mainImage(out vec4 c, in vec2 p){c=vec4(1.0);}", topk: 3}
+    expect: {http: 422, code: 40001}
+
+  # ---------- 边界 ----------
+  - id: min_length_code
+    desc: 单字符入参：长度合法但内容不合规，应返回 200 + passed=false
+    payload: {code: "x"}
+    expect: {http: 200, code: 0, data: {passed: false}}
+
+  - id: oversize_code_rejected
+    desc: 超过 20000 字符上限
+    payload: {code: "// filler line\n"}
+    repeat: {code: 2000}
+    expect: {http: 422, code: 40001}

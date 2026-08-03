@@ -1,0 +1,59 @@
+# /api/v1/retrieval/search 的数据驱动用例。
+# 检索侧的价值在于"排序对不对"，所以这里既断言协议，也断言首位命中。
+
+cases:
+  - id: search_raymarching
+    desc: 查 raymarching 应召回 raymarch 样本并排首位
+    marks: [smoke]
+    payload: {query: "raymarching sdf 球体求交", top_k: 3}
+    expect:
+      http: 200
+      code: 0
+      data: {items.0.shader_id: "fake_rm_001"}
+      min: {total: 1}
+
+  - id: search_noise
+    desc: 查噪声应召回 noise 样本
+    payload: {query: "value noise 噪声 hash 函数", top_k: 3}
+    expect: {http: 200, code: 0, data: {items.0.shader_id: "fake_noise_002"}}
+
+  - id: search_fractal
+    payload: {query: "mandelbrot 分形 迭代", top_k: 2}
+    expect: {http: 200, code: 0, data: {items.0.shader_id: "fake_fractal_003"}}
+
+  - id: search_with_tag_boost
+    desc: 指定 tags 后标签命中项应获得加分
+    payload: {query: "图案", top_k: 3, tags: ["voronoi"]}
+    expect:
+      http: 200
+      code: 0
+      min: {items.0.tag_match: 1.0}
+
+  - id: search_top_k_one
+    desc: top_k 下界
+    payload: {query: "raymarching", top_k: 1}
+    expect: {http: 200, code: 0, data: {total: 1}}
+
+  - id: search_top_k_max
+    desc: top_k 上界 20（语料只有 6 条，返回数应被语料规模截断）
+    payload: {query: "shader", top_k: 20}
+    expect: {http: 200, code: 0, max: {total: 6}}
+
+  # ---------- 异常 ----------
+  - id: search_empty_query
+    payload: {query: ""}
+    expect: {http: 422, code: 40001}
+
+  - id: search_top_k_zero
+    desc: top_k=0 越界
+    payload: {query: "raymarching", top_k: 0}
+    expect: {http: 422, code: 40001}
+
+  - id: search_top_k_over_limit
+    payload: {query: "raymarching", top_k: 21}
+    expect: {http: 422, code: 40001}
+
+  - id: search_query_too_long
+    payload: {query: "光线步进"}
+    repeat: {query: 200}
+    expect: {http: 422, code: 40001}

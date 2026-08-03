@@ -37,7 +37,10 @@ jobs:
       - name: 配置层守护用例
         # 放在最前面：它不依赖服务也不依赖 key，一旦红了说明是环境/配置问题，
         # 后面几十条接口用例就不必再跑一遍来重复报同一个根因。
-        run: pytest tests -m config -q --timeout=60
+        # 直接指定目标文件而不是 `tests -m config`：pytest 收集 `tests` 会
+        # import 所有测试模块（含依赖 openai/gradio 的），CI 精简依赖下
+        # 会在收集阶段 ImportError，`-m config` 的筛选根本来不及生效。
+        run: pytest tests/test_settings_config.py -q --timeout=60
 
       - name: 冒烟用例
         run: pytest tests_api -m smoke -q --timeout=120

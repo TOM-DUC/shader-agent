@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "统一响应信封",
+  "type": "object",
+  "required": ["code", "message", "request_id", "elapsed_ms", "data"],
+  "properties": {
+    "code": {"type": "integer"},
+    "message": {"type": "string"},
+    "request_id": {"type": "string", "minLength": 1},
+    "elapsed_ms": {"type": "number", "minimum": 0},
+    "data": {}
+  },
+  "additionalProperties": false
+}

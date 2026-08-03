@@ -35,8 +35,11 @@ build/
 # ===========================
 # 数据和产物（大文件，可脚本重建）
 # ===========================
-data/
-data/reports/
+# 注意：必须带前导斜杠只匹配根目录，否则 `data/` 会连带忽略
+# tests_api/data/（接口测试的 YAML 素材与 JSON Schema），导致 CI 上
+# FileNotFoundError: tests_api/data/*.yaml。
+/data/
+/data/reports/
 logs/
 
 # ===========================

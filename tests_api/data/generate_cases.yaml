@@ -1,0 +1,85 @@
+# /api/v1/shader/generate 的数据驱动用例。
+# 生成链路会真的跑「检索 → 起草 → 编译校验 →（失败则修复）」，
+# 在 test profile 下由确定性桩驱动，因此可以对内容做强断言。
+
+cases:
+  - id: generate_blue_dynamic
+    desc: 蓝色调 + 动态，最典型的正向场景
+    marks: [smoke]
+    payload:
+      description: 生成一个蓝色调的同心圆波纹动画
+      palette: 冷色 霓虹蓝
+      complexity: simple
+      dynamic: true
+    expect:
+      http: 200
+      code: 0
+      data: {compile_ok: true, iterations: 1}
+      contains: {code: "mainImage"}
+
+  - id: generate_warm_static
+    desc: 暖色 + 静态，验证 dynamic=false 时不应引入 iTime
+    payload:
+      description: 生成一个暖色渐变背景
+      palette: 暖色 日落
+      dynamic: false
+    expect:
+      http: 200
+      code: 0
+      data: {compile_ok: true}
+      not_contains: {code: "iTime"}
+
+  - id: generate_minimal_complexity
+    desc: complexity 取下界
+    payload: {description: 极简纯色渐变, complexity: minimal}
+    expect: {http: 200, code: 0, data: {compile_ok: true}}
+
+  - id: generate_complex_complexity
+    desc: complexity 取上界
+    marks: [slow]
+    payload: {description: 复杂的分形叠加效果, complexity: complex}
+    expect: {http: 200, code: 0}
+
+  - id: generate_with_constraints
+    desc: 带硬约束
+    payload:
+      description: 生成一个紫色调的噪声图案
+      palette: 霓虹紫
+      constraints: ["不要用纹理", "单 pass"]
+    expect: {http: 200, code: 0, data: {compile_ok: true}}
+
+  # ---------- 异常入参 ----------
+  - id: generate_empty_description
+    desc: 空需求
+    payload: {description: ""}
+    expect: {http: 422, code: 40001}
+
+  - id: generate_missing_description
+    payload: {palette: 蓝色}
+    expect: {http: 422, code: 40001, message_contains: "description"}
+
+  - id: generate_invalid_complexity
+    desc: 枚举外取值必须被拦下
+    payload: {description: 随便生成, complexity: super_complex}
+    expect: {http: 422, code: 40001}
+
+  - id: generate_fix_loops_over_limit
+    desc: max_fix_loops 上界为 3
+    payload: {description: 随便生成, max_fix_loops: 4}
+    expect: {http: 422, code: 40001}
+
+  - id: generate_fix_loops_boundary
+    desc: max_fix_loops=3 是合法上界
+    payload: {description: 随便生成, max_fix_loops: 3}
+    expect: {http: 200, code: 0}
+
+  - id: generate_fix_loops_zero
+    desc: max_fix_loops=0 表示不做修复，合法下界
+    payload: {description: 随便生成, max_fix_loops: 0}
+    expect: {http: 200, code: 0}
+
+  - id: generate_description_too_long
+    desc: 超过 2000 字符
+    payload: {description: "生成一个很复杂的效果。"}
+    repeat: {description: 300}
+    expect: {http: 422, code: 40001}

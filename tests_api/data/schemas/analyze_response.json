@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "分析接口响应",
+  "type": "object",
+  "required": ["code", "data"],
+  "properties": {
+    "code": {"const": 0},
+    "data": {
+      "type": "object",
+      "required": ["report", "report_md", "techniques", "references",
+                   "n_references", "elapsed_ms"],
+      "properties": {
+        "report_md": {"type": "string", "minLength": 1},
+        "techniques": {"type": "array", "items": {"type": "string"}},
+        "n_references": {"type": "integer", "minimum": 0},
+        "elapsed_ms": {"type": "number", "minimum": 0},
+        "report": {
+          "type": "object",
+          "required": ["source_code", "algorithm_summary", "key_variables",
+                       "techniques", "visual_effect", "similar_shaders",
+                       "section_walkthrough"],
+          "properties": {
+            "source_code": {"type": "string", "minLength": 1},
+            "algorithm_summary": {"type": "string"},
+            "key_variables": {"type": "object"},
+            "techniques": {"type": "array", "items": {"type": "string"}},
+            "visual_effect": {"type": "string"},
+            "similar_shaders": {"type": "array"},
+            "section_walkthrough": {"type": "object"}
+          }
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["shader_id", "name", "distance", "tags"]
+          }
+        }
+      }
+    }
+  }
+}
